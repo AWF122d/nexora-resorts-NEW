@@ -1,0 +1,43 @@
+{
+  "summary": "First end-to-end test of Nexora Resorts MVP. Backend: 18/18 pytest tests pass after fixing one 500 bug in POST /api/collections/{name} (Mongo ObjectId leak). Frontend: landing, login, demo OAuth flow, dashboard sidebar (12 nav items, owner username visible), bookings list, logout and protected-route redirect all work. Theme toggle persistence works but only cycles dark<->light (no blurple).",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "POST /api/collections/{name}", "issue": "Returned 500 because db.insert_one mutates the dict with ObjectId _id which FastAPI cannot serialize. FIXED in server.py by popping _id before return."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "ThemeToggle", "issue": "Cycle only toggles between dark and light. Expected dark -> light -> blurple per PRD. Sequence observed: 'dark' -> '' (light) -> 'dark' -> 'dark'. Blurple state never applied to <html> classList.", "selector": "[data-testid=theme-toggle]", "priority": "MEDIUM"}
+    ],
+    "integration_issues": [
+      {"flow": "Bookings Book Now", "issue": "Toast confirmation could not be detected via common toast selectors after clicking book-room-* button. POST /api/bookings works (verified via backend tests). Likely sonner/shadcn portal selector mismatch; visually unverified - main agent should confirm a visible toast renders on book.", "affected_selectors": ["[class*=toast]", "[role=status]"]}
+    ],
+    "design_issues": [
+      {"screen": "Login modal", "issues": ["Background image is rendered but heavily dimmed overlay; check if intentional luxury aesthetic vs. accidental over-dim"]}
+    ]
+  },
+  "test_report_links": ["/app/backend/tests/test_nexora_api.py", "/app/test_reports/pytest/pytest_results.xml"],
+  "action_items": [
+    "Theme toggle: add the 'blurple' state to the cycle and ensure it applies a class (e.g. 'blurple') to <html> so styles activate.",
+    "Verify toast UI on Book Now click renders visibly (Toaster mounted in App, proper sonner/shadcn import).",
+    "Optional: lower the landing/login background overlay opacity slightly so the resort image is more visible."
+  ],
+  "critical_code_review_comments": [
+    "POST /api/collections/{name} returned the mutated insert dict containing Mongo ObjectId - serialization 500. Always exclude _id before returning. (Applied fix.)",
+    "Demo login creates an owner user once; if perms are later mutated via PUT /api/users/{id}/permissions, subsequent demo logins return the mutated user (no re-grant) — could lock out the demo owner. Consider auto-restoring owner perms on demo login when as_owner=true.",
+    "server.py uses datetime.utcnow-style ISO strings stored as text; ok for MVP but sorting by created_at relies on lexical order — fine for ISO 8601 UTC.",
+    "No rate limiting on /api/auth/demo; acceptable for demo env."
+  ],
+  "updated_files": [
+    "/app/backend/server.py (fix: pop _id from collection insert response)",
+    "/app/backend/tests/test_nexora_api.py (new pytest suite)"
+  ],
+  "success_rate": {"backend": "100%", "frontend": "~90%"},
+  "test_credentials": "Demo owner via POST /api/auth/demo {username:'Nexora Owner', discord_id:'000000000000000000', as_owner:true}; UI: /login -> 'Continue as Demo Owner'",
+  "seed_data_creation": "Backend tests created TEST_ prefixed docs in punishments/events/sessions/authorities/forum_threads/hosted_bots and deleted them in the same test. roblox_group_id was set to 'TEST_12345' in settings (single doc, idempotent).",
+  "retest_needed": true,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Backend pytest at /app/backend/tests/test_nexora_api.py is the regression suite (18 tests, all passing). The owner_token fixture self-heals owner perms if a previous test mutated them. After main agent fixes the blurple theme state, retest by clicking [data-testid=theme-toggle] twice from dark and confirm classList includes 'blurple'. Also verify the booking toast visually.",
+  "rca_of_the_issue": "POST /api/collections/{name} 500: motor's insert_one(doc) adds an ObjectId '_id' field into the same dict; FastAPI's jsonable_encoder cannot serialize ObjectId, causing 500 with 'TypeError: ObjectId is not iterable'. Fix: doc.pop('_id', None) before returning. Reproduced by POST /api/collections/punishments {title:'x'} -> 500 before fix, 200 after."
+}
