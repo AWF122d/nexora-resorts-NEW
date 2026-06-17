@@ -1,0 +1,102 @@
+{
+  "brand": {
+    "name": "Nexora Resorts",
+    "domain": "nexoraresorts.cloud",
+    "tone": "Professional, Luxury, Command-Center Polish, Sober, Cinematic",
+    "archetype": "Archetype 5 (Luxury) for marketing combined with Archetype 4 (Swiss/High-Contrast) for dashboard"
+  },
+  "themes": {
+    "default": "dark",
+    "modes": ["dark", "light", "blurple"]
+  },
+  "colors": {
+    "dark": {
+      "background": "#09090b",
+      "surface": "#18181b",
+      "border": "#27272a",
+      "text_primary": "#fafafa",
+      "text_secondary": "#a1a1aa",
+      "accent_gold": "#D4AF37",
+      "accent_teal": "#0F766E"
+    },
+    "light": {
+      "background": "#fdfdfc",
+      "surface": "#ffffff",
+      "border": "#e4e4e7",
+      "text_primary": "#09090b",
+      "text_secondary": "#71717a",
+      "accent_gold": "#D4AF37",
+      "accent_teal": "#0D9488"
+    },
+    "blurple": {
+      "background": "#313338",
+      "surface": "#2B2D31",
+      "border": "#1E1F22",
+      "text_primary": "#F2F3F5",
+      "text_secondary": "#B5BAC1",
+      "accent_gold": "#FEE75C",
+      "accent_teal": "#00A8FC"
+    },
+    "discord_brand": "#5865F2"
+  },
+  "typography": {
+    "font_families": {
+      "marketing_headings": "Playfair Display, serif",
+      "ui_headings_and_body": "Outfit, sans-serif"
+    },
+    "rules": {
+      "hero_heading": "text-5xl sm:text-6xl font-serif tracking-tight leading-none text-white",
+      "section_heading": "text-3xl sm:text-4xl font-serif tracking-tight",
+      "dashboard_heading": "text-2xl font-sans font-medium tracking-tight",
+      "body": "text-base font-sans leading-relaxed",
+      "labels": "text-xs font-sans uppercase tracking-[0.2em]"
+    }
+  },
+  "layout_and_spacing": {
+    "marketing_page": "Generous spacing. Use p-12 to p-24. High-contrast negative space. Center-aligned hero only, left-aligned content for everything else.",
+    "dashboard_shell": "Strict bento/grid layout. Sidebar navigation. Use gap-4 or gap-6. Dense and functional.",
+    "hero_overlay": "MANDATORY bg-black/40 to bg-black/60 gradient overlay over the Caribbean resort image. Do not use opaque backgrounds for hero."
+  },
+  "components": {
+    "buttons": {
+      "discord_cta": "Medium size. bg-gradient-to-r from-[#5865F2] to-[#454FBF] text-white hover:opacity-90 transition-opacity rounded-md px-6 py-3 font-medium",
+      "primary": "bg-white text-black hover:bg-zinc-200 dark:bg-zinc-50 dark:text-zinc-900 rounded-md",
+      "ghost": "hover:bg-zinc-100 dark:hover:bg-zinc-800 text-zinc-900 dark:text-zinc-100"
+    },
+    "cards": {
+      "dashboard": "Flat solid backgrounds (e.g. bg-zinc-900 in dark mode), 1px solid border (border-zinc-800). No heavy drop shadows. Rounded corners (rounded-lg)."
+    },
+    "navigation": {
+      "marketing_header": "Crystal Glass. backdrop-blur-xl bg-black/40 border-b border-white/10. Sticky at top.",
+      "dashboard_sidebar": "Solid dark background (bg-zinc-950), subtle right border (border-zinc-800). Nav links have hover states with lighter gray background."
+    }
+  },
+  "media": {
+    "images": {
+      "hero_background": "https://customer-assets.emergentagent.com/job_824c6878-9cb6-4966-b0ae-ef85dac73560/artifacts/ocfqehb5_royalton_saint_lucia_display_image1600x1200-625772ab29180.jpg",
+      "brand_logo": "https://customer-assets.emergentagent.com/job_824c6878-9cb6-4966-b0ae-ef85dac73560/artifacts/gqsz8ag7_NexoraNoBG.png",
+      "bookings": [
+        "https://images.unsplash.com/photo-1718942899965-4fc10607d805?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjA3MDB8MHwxfHNlYXJjaHwxfHxsdXh1cnklMjByZXNvcnQlMjBzdWl0ZXxlbnwwfHx8fDE3ODE3MzM4NDd8MA&ixlib=rb-4.1.0&q=85",
+        "https://images.unsplash.com/photo-1702830499141-a0634d87d6af?crop=entropy&cs=srgb&fm=jpg&ixid=M3w3NDk1ODB8MHwxfHNlYXJjaHwxfHxvY2VhbiUyMHZpZXclMjBiYWxjb255fGVufDB8fHx8MTc4MTczMzg0N3ww&ixlib=rb-4.1.0&q=85",
+        "https://images.unsplash.com/photo-1776763018972-588e27bf6511?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjA3MDB8MHwxfHNlYXJjaHwyfHxsdXh1cnklMjByZXNvcnQlMjBzdWl0ZXxlbnwwfHx8fDE3ODE3MzM4NDd8MA&ixlib=rb-4.1.0&q=85"
+      ]
+    }
+  },
+  "interactions_and_animations": {
+    "hover": "All interactive elements MUST have distinct hover states.",
+    "transitions": "Use specific transitions (e.g., transition-colors duration-200, transition-transform hover:-translate-y-1).",
+    "accessibility": "Focus states required. Use ring-2 ring-white/50 for dark mode focus."
+  },
+  "instructions_to_main_agent": [
+    "Do NOT use 'Inter' font for headings. Use Playfair Display for marketing headings and Outfit for UI/Dashboard.",
+    "Ensure the hero background image is clearly visible but has a dark gradient overlay (bg-black/50) so the Nexora logo and 'Sign in with Discord' button pop.",
+    "Implement a theme toggle supporting 'dark' (default), 'light', and 'blurple' modes.",
+    "For the dashboard shell, use a clean sidebar navigation with the following links: Bookings, Player Search, Events, Sessions, Schedule, Ranking, Authorities, Forum, Hosting, Settings. Protect these behind a mock Discord auth.",
+    "Bookings page should list room types using the provided booking images. Include a gamepass check UI and a 'Book Now' button that simulates a Discord bot confirmation.",
+    "Avoid standard 'gamer' or 'Roblox' aesthetics. The UI must feel like a premium Four Seasons resort combined with a high-end developer tool.",
+    "ALL interactive elements (buttons, links, form inputs) MUST include a 'data-testid' attribute (e.g., data-testid='discord-login-btn').",
+    "Use lucide-react for icons.",
+    "DO NOT USE PLACEHOLDER IMAGES. Use only the URLs provided in the media section.",
+    "Write components in pure HTML/Tailwind or customized Shadcn components for complex UI (tables, dropdowns). Build a custom Datepicker using Shadcn Calendar if needed."
+  ]
+}
