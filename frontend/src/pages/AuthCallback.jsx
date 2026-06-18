@@ -21,7 +21,11 @@ export default function AuthCallback() {
         localStorage.setItem("nx_token", data.token);
         await refresh();
         toast.success(`Welcome, ${data.user.username}`);
-        nav("/dashboard", { replace: true });
+        if (!data.user.roblox_username) {
+          nav("/robloxlinking", { replace: true });
+        } else {
+          nav("/dashboard", { replace: true });
+        }
       } catch (e) {
         toast.error("Discord sign-in failed");
         nav("/login", { replace: true });

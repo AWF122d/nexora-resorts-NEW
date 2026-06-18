@@ -21,11 +21,8 @@ export function AuthProvider({ children }) {
 
   useEffect(() => { refresh(); }, [refresh]);
 
-  const demoLogin = async (asOwner = true, username = "Nexora Owner") => {
-    const { data } = await api.post("/auth/demo", { username, discord_id: "000000000000000000", as_owner: asOwner });
-    localStorage.setItem("nx_token", data.token);
-    setUser(data.user);
-    return data.user;
+  const demoLogin = async () => {
+    throw new Error("Demo login is disabled. Sign in with Discord.");
   };
 
   const logout = () => {

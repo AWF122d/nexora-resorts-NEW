@@ -5,10 +5,10 @@ import { useAuth } from "@/contexts/AuthContext";
 import { toast } from "sonner";
 
 export default function Login() {
-  const { user, demoLogin } = useAuth();
+  const { user } = useAuth();
   const nav = useNavigate();
   const [discordUrl, setDiscordUrl] = useState(null);
-  const [busy, setBusy] = useState(false);
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     if (user) nav("/dashboard", { replace: true });
@@ -17,15 +17,9 @@ export default function Login() {
   useEffect(() => {
     api.get("/auth/discord/url", { params: { redirect: `${window.location.origin}/auth/callback` } })
       .then(({ data }) => { if (data.configured) setDiscordUrl(data.url); })
-      .catch(() => {});
+      .catch(() => {})
+      .finally(() => setLoading(false));
   }, []);
-
-  const onDemo = async () => {
-    setBusy(true);
-    try { await demoLogin(true); toast.success("Signed in (Demo Owner)"); nav("/dashboard"); }
-    catch (e) { toast.error("Demo login failed"); }
-    finally { setBusy(false); }
-  };
 
   return (
     <div className="relative min-h-screen text-white">
@@ -39,36 +33,21 @@ export default function Login() {
             <span className="font-serif text-xl">Nexora Resorts</span>
           </Link>
           <h1 className="font-serif text-3xl tracking-tight">Welcome back.</h1>
-          <p className="mt-2 text-sm text-white/60">Sign in to access the operations cockpit.</p>
+          <p className="mt-2 text-sm text-white/60">Sign in with Discord to access the resort.</p>
 
-          <div className="mt-8 space-y-3">
-            {discordUrl ? (
-              <a
-                href={discordUrl}
-                data-testid="login-discord-btn"
-                className="btn-discord block rounded-md px-6 py-3 font-medium text-sm"
-              >
+          <div className="mt-8">
+            {loading ? (
+              <div className="text-sm text-white/50">Checking sign-in…</div>
+            ) : discordUrl ? (
+              <a href={discordUrl} data-testid="login-discord-btn"
+                 className="btn-discord block rounded-md px-6 py-3 font-medium text-sm">
                 Continue with Discord
               </a>
             ) : (
-              <button
-                disabled
-                className="btn-discord w-full rounded-md px-6 py-3 font-medium text-sm opacity-60 cursor-not-allowed"
-                title="Add DISCORD_CLIENT_ID / DISCORD_CLIENT_SECRET to enable real OAuth."
-                data-testid="login-discord-disabled"
-              >
-                Discord OAuth not configured
-              </button>
+              <div className="rounded-md border border-amber-500/30 bg-amber-500/5 text-amber-200 text-xs p-4 text-left">
+                Sign-in is temporarily unavailable. Please contact a Nexora administrator.
+              </div>
             )}
-
-            <button
-              onClick={onDemo}
-              disabled={busy}
-              data-testid="login-demo-btn"
-              className="w-full rounded-md border border-white/15 px-6 py-3 text-sm hover:bg-white/5 transition-colors"
-            >
-              {busy ? "Signing in…" : "Continue as Demo Owner"}
-            </button>
           </div>
 
           <p className="mt-7 text-[11px] uppercase tracking-[0.3em] text-white/40">

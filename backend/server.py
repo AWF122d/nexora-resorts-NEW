@@ -200,28 +200,6 @@ async def health():
     return {"ok": True, "bot": bot_status, "oauth": oauth_status, "guild": DISCORD_GUILD_ID}
 
 # ----- Auth -----
-class DemoLoginIn(BaseModel):
-    username: str = "Nexora Owner"
-    discord_id: str = "000000000000000000"
-    as_owner: bool = True
-
-@api.post("/auth/demo")
-async def auth_demo(body: DemoLoginIn):
-    """Demo login when Discord OAuth is not configured. Creates / fetches user."""
-    user = await db.users.find_one({"discord_id": body.discord_id}, {"_id": 0})
-    if not user:
-        u = User(
-            discord_id=body.discord_id,
-            username=body.username,
-            avatar=None,
-            roles=["owner"] if body.as_owner else ["member"],
-            permissions=DEFAULT_PERMISSIONS if body.as_owner else ["dashboard.view", "bookings.create"],
-        )
-        await db.users.insert_one(u.model_dump())
-        user = u.model_dump()
-    token = make_token({"discord_id": user["discord_id"], "username": user["username"]})
-    return {"token": token, "user": user}
-
 @api.get("/auth/discord/url")
 async def discord_oauth_url(redirect: Optional[str] = None):
     if not DISCORD_CLIENT_ID:
