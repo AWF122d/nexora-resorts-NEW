@@ -66,3 +66,23 @@ User asked for a full Roblox-community management platform for "Nexora Resorts" 
 - Multi-bot sandboxed hosting (UI only).
 - Session phases full lifecycle: grading tab, ranking tab, marking (Passed / Hardest Associate), final summary.
 - Forum threading + replies + moderation.
+
+## Iteration 3 — Feb 18, 2026 (bot + game API + role linking)
+- Discord bot worker: discord.py running as background asyncio task; status visible at `/api/bot/health` and Bot Hosting page (Token configured / Bot online / Guild pill). Bot login confirmed (Nexora Operations#5407). Helper functions for booking DMs, punishment/session/event/authority embeds wired into the existing flows. Invite URL surfaced for the owner to add the bot to the guild.
+- Roblox OAuth2 (`/api/auth/roblox/url` + `/api/auth/roblox/callback`) — Connect Roblox page replaces the typed-username flow.
+- Real dashboard roles (`/api/catalog/dash-roles`) with full permission toggles. `/api/users/{id}/assign-role` applies a role's permissions to a user.
+- Role/Authority linking page (`/role-links`): map Roblox group rank ↔ Discord role ↔ Dashboard role + Authority flag.
+- Authorities page: `/api/authorities/grant` (auto-embed to authority channel), `/api/authorities/{id}/revoke` (reply-revert in Discord).
+- Game-facing API (X-Nexora-Game-Key header): `/api/game/authority`, `/api/game/permissions`, `/api/game/punishment`. Builderman → authority='Manager' verified.
+- Owner-only **Game API** page (`/integration`) with GAME_API_KEY, INGEST_SECRET, endpoint reference, drop-in Lua snippets.
+- `/privacy` alias of `/privacy-policy`.
+- Player Search profile gained inline "Issue punishment" card (qp-type / qp-reason / qp-submit).
+- Fix: route renamed from `/api-integration` to `/integration` (the `/api/*` prefix is hijacked by k8s ingress).
+- 49/49 backend tests pass.
+
+## Still mocked / next P1
+- Forum subdomain `forum.nexoraresorts.cloud`: the page exists at `/forum`. Subdomain routing requires DNS CNAME + ingress rule on your domain (not configurable from inside this preview environment). When you deploy to `nexoraresorts.cloud`, add a CNAME and an ingress rewrite from `forum.nexoraresorts.cloud` → `/forum`.
+- Bot is online but **not yet invited** to your guild — click "Invite bot to your server" on `/hosting` once, then sessions/events/punishments/authority embeds will start posting.
+- Slash command `/book` is registered but won't sync to guild until invited.
+- Roblox Open Cloud ranking promotion call (button is still toast-only).
+- Gamepass ownership verification.

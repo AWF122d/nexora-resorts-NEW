@@ -30,11 +30,15 @@ export default function Hosting() {
 
       <div className="surface p-6">
         <div className="text-[11px] uppercase tracking-[0.3em] text-[var(--text-2)] mb-4">Status</div>
-        <div className="flex flex-wrap gap-2">
-          <Pill ok={!!health?.token_configured} label={health?.token_configured ? "Token configured" : "No token"} />
-          <Pill ok={!!health?.running} label={health?.running ? "Bot online" : "Bot offline"} />
-          <Pill ok={!!health?.guild_id} label={health?.guild_id ? `Guild ${health.guild_id}` : "No guild"} />
-        </div>
+        {health === null ? (
+          <div className="text-sm text-[var(--text-2)]">Checking…</div>
+        ) : (
+          <div className="flex flex-wrap gap-2">
+            <Pill ok={!!health?.token_configured} label={health?.token_configured ? "Token configured" : "No token"} />
+            <Pill ok={!!health?.running} label={health?.running ? "Bot online" : "Bot offline"} />
+            <Pill ok={!!health?.guild_id} label={health?.guild_id ? `Guild ${health.guild_id}` : "No guild"} />
+          </div>
+        )}
         <div className="mt-5 flex flex-wrap gap-2">
           <a href={invite} target="_blank" rel="noreferrer" data-testid="invite-bot-btn" className="btn-discord rounded-md px-4 py-2 text-sm inline-flex items-center gap-2">
             <ExternalLink className="h-4 w-4" /> Invite bot to your server

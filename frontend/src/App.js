@@ -70,7 +70,7 @@ export default function App() {
               <Route path="/authorities" element={<Protected perm="authorities.grant"><Authorities /></Protected>} />
               <Route path="/forum" element={<Forum />} />
               <Route path="/hosting" element={<Protected perm="hosting.manage"><Hosting /></Protected>} />
-              <Route path="/api-integration" element={<Protected perm="settings.manage"><ApiPage /></Protected>} />
+              <Route path="/integration" element={<Protected perm="settings.manage"><ApiPage /></Protected>} />
               <Route path="/role-links" element={<Protected perm="settings.manage"><RoleLinks /></Protected>} />
               <Route path="/robloxlinking" element={<RobloxLinking />} />
               <Route path="/settings" element={<Protected perm="settings.manage"><Settings /></Protected>} />

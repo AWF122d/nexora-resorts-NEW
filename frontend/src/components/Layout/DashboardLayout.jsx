@@ -23,7 +23,7 @@ const NAV = [
   { to: "/role-links", label: "Role Linking", icon: GitBranch, perm: "settings.manage" },
   { to: "/forum", label: "Forum", icon: MessagesSquare, perm: "dashboard.view" },
   { to: "/hosting", label: "Bot Hosting", icon: Server, perm: "hosting.manage" },
-  { to: "/api-integration", label: "Game API", icon: Terminal, perm: "settings.manage" },
+  { to: "/integration", label: "Game API", icon: Terminal, perm: "settings.manage" },
   { to: "/robloxlinking", label: "Roblox Link", icon: Link2 },
   { to: "/settings", label: "Settings", icon: SettingsIcon, perm: "settings.manage" },
 ];
