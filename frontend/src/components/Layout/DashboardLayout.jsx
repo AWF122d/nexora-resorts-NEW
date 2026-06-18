@@ -6,7 +6,7 @@ import ThemeToggle from "@/components/ThemeToggle";
 import {
   LayoutDashboard, BedDouble, Search, CalendarDays, Activity,
   CalendarRange, TrendingUp, ShieldCheck, MessagesSquare,
-  Server, Settings as SettingsIcon, Link2, LogOut,
+  Server, Settings as SettingsIcon, Link2, LogOut, Terminal, GitBranch,
 } from "lucide-react";
 import RobloxIdentityCard from "@/components/RobloxIdentityCard";
 
@@ -20,9 +20,11 @@ const NAV = [
   { to: "/activity", label: "Activity", icon: Activity, perm: "dashboard.view" },
   { to: "/ranking", label: "Ranking", icon: TrendingUp, perm: "ranking.promote" },
   { to: "/authorities", label: "Authorities", icon: ShieldCheck, perm: "authorities.grant" },
+  { to: "/role-links", label: "Role Linking", icon: GitBranch, perm: "settings.manage" },
   { to: "/forum", label: "Forum", icon: MessagesSquare, perm: "dashboard.view" },
   { to: "/hosting", label: "Bot Hosting", icon: Server, perm: "hosting.manage" },
-  { to: "/robloxlinking", label: "Roblox Link", icon: Link2, perm: "roblox.link" },
+  { to: "/api-integration", label: "Game API", icon: Terminal, perm: "settings.manage" },
+  { to: "/robloxlinking", label: "Roblox Link", icon: Link2 },
   { to: "/settings", label: "Settings", icon: SettingsIcon, perm: "settings.manage" },
 ];
 
@@ -42,7 +44,7 @@ export default function DashboardLayout() {
           </div>
         </Link>
         <nav className="flex-1 overflow-y-auto py-3 px-2">
-          {NAV.filter(n => hasPerm(n.perm)).map((n) => (
+          {NAV.filter(n => !n.perm || hasPerm(n.perm)).map((n) => (
             <NavLink
               key={n.to}
               to={n.to}

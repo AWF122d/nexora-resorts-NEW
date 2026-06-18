@@ -82,6 +82,9 @@ DEFAULT_PERMISSIONS = [
 ROBLOX_GROUP_ID = os.environ.get("ROBLOX_GROUP_ID", "")
 ROBLOX_OPEN_CLOUD_API_KEY = os.environ.get("ROBLOX_OPEN_CLOUD_API_KEY", "")
 INGEST_SECRET = os.environ.get("INGEST_SECRET", "")
+GAME_API_KEY = os.environ.get("GAME_API_KEY", "")
+ROBLOX_OAUTH_CLIENT_ID = os.environ.get("ROBLOX_OAUTH_CLIENT_ID", "")
+ROBLOX_OAUTH_CLIENT_SECRET = os.environ.get("ROBLOX_OAUTH_CLIENT_SECRET", "")
 
 # ---------- Roblox helpers ----------
 async def roblox_user_by_name(username: str) -> Optional[dict]:
@@ -316,7 +319,6 @@ async def create_booking(body: BookingIn, user=Depends(current_user)):
     room = await db.rooms.find_one({"id": body.room_id}, {"_id": 0})
     if not room:
         raise HTTPException(404, "Room not found")
-    # gamepass check is MOCKED — always passes for now
     count = await db.bookings.count_documents({})
     bk = Booking(
         user_discord_id=user["discord_id"],
@@ -326,6 +328,16 @@ async def create_booking(body: BookingIn, user=Depends(current_user)):
         room_number=100 + count + 1,
     )
     await db.bookings.insert_one(bk.model_dump())
+    try:
+        import discord_bot as _b
+        if _b.is_running() and user["discord_id"] and user["discord_id"] != "000000000000000000":
+            await _b.dm_booking(
+                discord_user_id=user["discord_id"],
+                mention=f"<@{user['discord_id']}>",
+                room_number=bk.room_number, game_link=None, booking_id=bk.id,
+            )
+    except Exception as e:
+        log.warning("DM booking failed: %s", e)
     return bk
 
 @api.get("/bookings")
@@ -426,6 +438,39 @@ async def col_create(name: str, body: Dict[str, Any], user=Depends(current_user)
     }
     await db[name].insert_one(doc)
     doc.pop("_id", None)
+    # Side-effects: post embeds to Discord channels for certain collections.
+    try:
+        import discord_bot as _b
+        if name == "punishments":
+            mid = await _b.send_punishment_log(
+                target=doc.get("target") or "—", p_type=doc.get("type") or "Note",
+                reason=doc.get("reason") or "", issued_by=user.get("username") or "—",
+            )
+            if mid:
+                await db.punishments.update_one({"id": doc["id"]}, {"$set": {"discord_message_id": mid}})
+        elif name == "sessions":
+            await _b.send_session_log(
+                session_type=doc.get("session_type") or "Session",
+                host=doc.get("host") or user.get("username") or "—",
+                attendees=list(doc.get("attendees") or []),
+                co_hosts=list(doc.get("co_hosts") or []),
+                support=list(doc.get("support_staff") or []),
+                supervisor=doc.get("supervisor"),
+            )
+        elif name == "events":
+            mid = await _b.send_event_log(
+                title=doc.get("title") or "Event",
+                when=doc.get("timestamp") or doc.get("when") or "TBD",
+                host=doc.get("host") or user.get("username") or "—",
+                co_host=doc.get("co_host"),
+                supervisor=doc.get("supervisor"),
+                description=doc.get("description") or "",
+                game_link=doc.get("game_link"),
+            )
+            if mid:
+                await db.events.update_one({"id": doc["id"]}, {"$set": {"discord_message_id": mid}})
+    except Exception as e:
+        log.warning("discord side-effect failed for %s: %s", name, e)
     return doc
 
 @api.delete("/collections/{name}/{item_id}")
@@ -647,6 +692,271 @@ async def activity(user=Depends(current_user)):
     items.sort(key=lambda x: x.get("created_at", ""), reverse=True)
     return {"items": items[:80]}
 
+# ----- Roblox OAuth2 -----
+@api.get("/auth/roblox/url")
+async def roblox_oauth_url(redirect: Optional[str] = None):
+    if not ROBLOX_OAUTH_CLIENT_ID:
+        return {"configured": False, "url": None}
+    redirect_uri = redirect or ""
+    state = uuid.uuid4().hex
+    url = (
+        "https://apis.roblox.com/oauth/v1/authorize"
+        f"?client_id={ROBLOX_OAUTH_CLIENT_ID}"
+        f"&redirect_uri={redirect_uri}"
+        f"&scope=openid%20profile%20group:read"
+        f"&response_type=code&state={state}"
+    )
+    return {"configured": True, "url": url, "state": state}
+
+class RobloxCallbackIn(BaseModel):
+    code: str
+    redirect_uri: str
+
+@api.post("/auth/roblox/callback")
+async def roblox_callback(body: RobloxCallbackIn, user=Depends(current_user)):
+    if not (ROBLOX_OAUTH_CLIENT_ID and ROBLOX_OAUTH_CLIENT_SECRET):
+        raise HTTPException(400, "Roblox OAuth not configured")
+    async with httpx.AsyncClient(timeout=15) as c:
+        tok = await c.post(
+            "https://apis.roblox.com/oauth/v1/token",
+            data={
+                "client_id": ROBLOX_OAUTH_CLIENT_ID,
+                "client_secret": ROBLOX_OAUTH_CLIENT_SECRET,
+                "grant_type": "authorization_code",
+                "code": body.code,
+                "redirect_uri": body.redirect_uri,
+            },
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+        )
+        if tok.status_code != 200:
+            raise HTTPException(400, f"Roblox token exchange failed: {tok.text}")
+        access = tok.json()["access_token"]
+        me = await c.get("https://apis.roblox.com/oauth/v1/userinfo",
+                         headers={"Authorization": f"Bearer {access}"})
+        if me.status_code != 200:
+            raise HTTPException(400, "Roblox userinfo failed")
+        ui = me.json()
+    rid = int(ui["sub"])
+    role = await roblox_group_role(rid) or {"name": "Guest", "rank": 0}
+    await db.users.update_one(
+        {"discord_id": user["discord_id"]},
+        {"$set": {
+            "roblox_user_id": rid,
+            "roblox_username": ui.get("preferred_username") or ui.get("name"),
+            "roblox_avatar": ui.get("picture"),
+            "roblox_group_role": role,
+        }},
+    )
+    return {"ok": True, "roblox_id": rid, "group_role": role}
+
+# ----- Dashboard roles (real, not test) -----
+class DashRole(BaseModel):
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    name: str
+    permissions: List[str] = []
+    color: Optional[str] = None
+
+@api.get("/catalog/dash-roles")
+async def list_dash_roles():
+    items = await db.dash_roles.find({}, {"_id": 0}).to_list(200)
+    return {"items": items}
+
+@api.post("/catalog/dash-roles")
+async def create_dash_role(body: DashRole, user=Depends(require_perm("settings.manage"))):
+    await db.dash_roles.insert_one(body.model_dump()); return body
+
+@api.put("/catalog/dash-roles/{rid}")
+async def update_dash_role(rid: str, body: DashRole, user=Depends(require_perm("settings.manage"))):
+    await db.dash_roles.update_one({"id": rid}, {"$set": body.model_dump(exclude={"id"})})
+    return {"ok": True}
+
+@api.delete("/catalog/dash-roles/{rid}")
+async def delete_dash_role(rid: str, user=Depends(require_perm("settings.manage"))):
+    await db.dash_roles.delete_one({"id": rid}); return {"ok": True}
+
+class AssignRoleIn(BaseModel):
+    role_id: Optional[str] = None
+    extra_permissions: Optional[List[str]] = None
+
+@api.post("/users/{uid}/assign-role")
+async def assign_role(uid: str, body: AssignRoleIn, user=Depends(require_perm("settings.manage"))):
+    update: Dict[str, Any] = {}
+    perms: List[str] = []
+    if body.role_id:
+        role = await db.dash_roles.find_one({"id": body.role_id}, {"_id": 0})
+        if not role: raise HTTPException(404, "Role not found")
+        update["dash_role_id"] = role["id"]
+        update["dash_role_name"] = role["name"]
+        perms = list(role.get("permissions") or [])
+    else:
+        update["dash_role_id"] = None
+        update["dash_role_name"] = None
+    if body.extra_permissions:
+        perms = list(set(perms + body.extra_permissions))
+    update["permissions"] = perms
+    res = await db.users.update_one({"id": uid}, {"$set": update})
+    if res.matched_count == 0: raise HTTPException(404, "User not found")
+    return {"ok": True}
+
+# ----- Role / Authority linking -----
+class RoleLink(BaseModel):
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    roblox_rank: Optional[int] = None
+    roblox_rank_name: Optional[str] = None
+    discord_role_id: Optional[str] = None
+    dash_role_id: Optional[str] = None
+    authority: bool = False
+
+@api.get("/catalog/role-links")
+async def list_role_links(user=Depends(current_user)):
+    items = await db.role_links.find({}, {"_id": 0}).to_list(500)
+    return {"items": items}
+
+@api.post("/catalog/role-links")
+async def create_role_link(body: RoleLink, user=Depends(require_perm("settings.manage"))):
+    await db.role_links.insert_one(body.model_dump()); return body
+
+@api.put("/catalog/role-links/{lid}")
+async def update_role_link(lid: str, body: RoleLink, user=Depends(require_perm("settings.manage"))):
+    await db.role_links.update_one({"id": lid}, {"$set": body.model_dump(exclude={"id"})})
+    return {"ok": True}
+
+@api.delete("/catalog/role-links/{lid}")
+async def delete_role_link(lid: str, user=Depends(require_perm("settings.manage"))):
+    await db.role_links.delete_one({"id": lid}); return {"ok": True}
+
+# ----- Authorities (grant/revoke) -----
+class GrantAuthorityIn(BaseModel):
+    roblox_username: str
+    roblox_user_id: Optional[int] = None
+    discord_id: Optional[str] = None
+    rank: str
+
+@api.post("/authorities/grant")
+async def grant_authority(body: GrantAuthorityIn, user=Depends(require_perm("authorities.grant"))):
+    rid = body.roblox_user_id
+    if not rid:
+        rb = await roblox_user_by_name(body.roblox_username)
+        if rb: rid = rb["id"]
+    doc = {
+        "id": str(uuid.uuid4()),
+        "roblox_username": body.roblox_username,
+        "roblox_user_id": rid,
+        "discord_id": body.discord_id,
+        "rank": body.rank,
+        "granted_by": user["username"],
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "active": True,
+    }
+    await db.authorities.insert_one(doc); doc.pop("_id", None)
+    try:
+        import discord_bot
+        mid = await discord_bot.send_authority_log(
+            roblox_username=body.roblox_username, discord_id=body.discord_id or "—",
+            rank=body.rank, by=user["username"],
+        )
+        if mid:
+            await db.authorities.update_one({"id": doc["id"]}, {"$set": {"discord_message_id": mid}})
+    except Exception as e:
+        log.warning("authority log failed: %s", e)
+    return doc
+
+@api.post("/authorities/{aid}/revoke")
+async def revoke_authority(aid: str, user=Depends(require_perm("authorities.revoke"))):
+    a = await db.authorities.find_one({"id": aid}, {"_id": 0})
+    if not a: raise HTTPException(404, "Not found")
+    await db.authorities.update_one({"id": aid}, {"$set": {"active": False, "revoked_by": user["username"]}})
+    try:
+        import discord_bot
+        await discord_bot.reply_revert("authority", a.get("discord_message_id"), by=user["username"])
+    except Exception:
+        pass
+    return {"ok": True}
+
+# ----- Game-facing API -----
+def _game_auth(x_nexora_game_key: Optional[str] = Header(None)):
+    if not GAME_API_KEY or x_nexora_game_key != GAME_API_KEY:
+        raise HTTPException(401, "Invalid game API key")
+    return True
+
+@api.get("/game/authority")
+async def game_authority(roblox_id: Optional[int] = None, username: Optional[str] = None,
+                         _=Depends(_game_auth)):
+    if not roblox_id and username:
+        rb = await roblox_user_by_name(username)
+        if rb: roblox_id = rb["id"]
+    if not roblox_id:
+        return {"authority": None}
+    a = await db.authorities.find_one(
+        {"roblox_user_id": roblox_id, "active": True},
+        {"_id": 0}, sort=[("created_at", -1)],
+    )
+    return {"authority": a["rank"] if a else None, "record": a}
+
+@api.get("/game/permissions")
+async def game_perms(roblox_id: Optional[int] = None, username: Optional[str] = None,
+                     _=Depends(_game_auth)):
+    if not roblox_id and username:
+        rb = await roblox_user_by_name(username)
+        if rb: roblox_id = rb["id"]
+    if not roblox_id:
+        return {"permissions": [], "dash_role": None}
+    u = await db.users.find_one({"roblox_user_id": roblox_id}, {"_id": 0})
+    return {
+        "permissions": (u or {}).get("permissions") or [],
+        "dash_role": (u or {}).get("dash_role_name"),
+        "roblox_group_role": (u or {}).get("roblox_group_role"),
+    }
+
+@api.post("/game/punishment")
+async def game_punishment(payload: Dict[str, Any], _=Depends(_game_auth)):
+    target = str(payload.get("target") or "").strip()
+    if not target:
+        raise HTTPException(400, "target required")
+    doc = {
+        "id": str(uuid.uuid4()),
+        "target": target,
+        "type": payload.get("type") or "Note",
+        "reason": payload.get("reason") or "",
+        "status": "active",
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "created_by": payload.get("by") or "in-game",
+    }
+    await db.punishments.insert_one(doc); doc.pop("_id", None)
+    try:
+        import discord_bot
+        await discord_bot.send_punishment_log(
+            target=doc["target"], p_type=doc["type"], reason=doc["reason"], issued_by=doc["created_by"],
+        )
+    except Exception:
+        pass
+    return doc
+
+@api.get("/game/info")
+async def game_info(user=Depends(require_perm("settings.manage"))):
+    return {
+        "game_api_key": GAME_API_KEY,
+        "endpoints": {
+            "authority":   "GET  /api/game/authority?roblox_id=<id>",
+            "permissions": "GET  /api/game/permissions?roblox_id=<id>",
+            "punishment":  "POST /api/game/punishment",
+            "chatlog":     "POST /api/ingest/chatlog",
+            "adminlog":    "POST /api/ingest/adminlog",
+        },
+        "headers": {"X-Nexora-Game-Key": "<GAME_API_KEY>"},
+    }
+
+# ----- Bot health -----
+@api.get("/bot/health")
+async def bot_health(user=Depends(current_user)):
+    import discord_bot as _b
+    return {
+        "running": _b.is_running(),
+        "guild_id": DISCORD_GUILD_ID,
+        "token_configured": bool(DISCORD_BOT_TOKEN),
+        "log_channels": LOG_CHANNELS,
+    }
+
 # ----- Mount -----
 app.include_router(api)
 
@@ -658,13 +968,23 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# ----- Discord bot worker -----
+import discord_bot
+
 @app.on_event("startup")
 async def on_startup():
     await ensure_seed()
     log.info("Nexora API ready. Discord bot: %s | OAuth: %s",
              "configured" if DISCORD_BOT_TOKEN else "demo",
              "configured" if DISCORD_CLIENT_ID else "demo")
+    if DISCORD_BOT_TOKEN:
+        asyncio.create_task(discord_bot.start_bot())
 
 @app.on_event("shutdown")
 async def on_shutdown():
+    try:
+        if discord_bot.is_running():
+            await discord_bot.bot.close()
+    except Exception:
+        pass
     client.close()

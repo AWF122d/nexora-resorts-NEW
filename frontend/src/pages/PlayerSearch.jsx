@@ -1,7 +1,8 @@
 import React, { useEffect, useState } from "react";
 import { api } from "@/lib/api";
 import { toast } from "sonner";
-import { Search, Loader2 } from "lucide-react";
+import { Search, Loader2, Plus } from "lucide-react";
+import { useAuth } from "@/contexts/AuthContext";
 
 const TABS = [
   { key: "chat", label: "Chat Logs" },
@@ -9,12 +10,15 @@ const TABS = [
   { key: "sessions", label: "Sessions" },
   { key: "punishments", label: "Punishments" },
 ];
+const P_TYPES = ["Staff Warning", "Verbal Warning", "Mute", "Blacklist", "Termination", "Game Ban", "Machine Ban", "Note"];
 
 export default function PlayerSearch() {
+  const { hasPerm } = useAuth();
   const [q, setQ] = useState("");
   const [loading, setLoading] = useState(false);
   const [data, setData] = useState(null);
   const [tab, setTab] = useState("chat");
+  const [pForm, setPForm] = useState({ type: P_TYPES[0], reason: "" });
 
   const lookup = async (e) => {
     e?.preventDefault?.();
@@ -26,6 +30,19 @@ export default function PlayerSearch() {
     } catch (err) {
       toast.error(err.response?.data?.detail || "Not found");
     } finally { setLoading(false); }
+  };
+
+  const issuePunishment = async () => {
+    if (!pForm.reason) return toast.error("Reason required");
+    try {
+      await api.post("/collections/punishments", {
+        target: data.roblox?.name || q,
+        type: pForm.type, reason: pForm.reason, status: "active",
+      });
+      toast.success(`${pForm.type} issued`);
+      setPForm({ type: P_TYPES[0], reason: "" });
+      lookup();
+    } catch (e) { toast.error(e.response?.data?.detail || "Failed"); }
   };
 
   const Tab = ({ k, label, count }) => (
@@ -62,21 +79,38 @@ export default function PlayerSearch() {
       </form>
 
       {data && (
-        <div className="mt-8 grid lg:grid-cols-[280px,1fr] gap-6">
-          <div className="surface p-5">
-            <div className="flex items-center gap-3">
-              <div className="h-16 w-16 rounded-full overflow-hidden bg-nx-gold/15">
-                {data.roblox?.avatar ? <img src={data.roblox.avatar} alt="" className="h-full w-full object-cover" /> : null}
+        <div className="mt-8 grid lg:grid-cols-[300px,1fr] gap-6">
+          <div className="space-y-4">
+            <div className="surface p-5">
+              <div className="flex items-center gap-3">
+                <div className="h-16 w-16 rounded-full overflow-hidden bg-nx-gold/15">
+                  {data.roblox?.avatar ? <img src={data.roblox.avatar} alt="" className="h-full w-full object-cover" /> : null}
+                </div>
+                <div className="min-w-0">
+                  <div className="font-serif text-lg truncate">{data.roblox?.display_name || data.roblox?.name || q}</div>
+                  <div className="text-xs text-[var(--text-2)] truncate">@{data.roblox?.name}</div>
+                </div>
               </div>
-              <div className="min-w-0">
-                <div className="font-serif text-lg truncate">{data.roblox?.display_name || data.roblox?.name || q}</div>
-                <div className="text-xs text-[var(--text-2)] truncate">@{data.roblox?.name}</div>
+              <div className="mt-5 space-y-2 text-sm">
+                <div><div className="text-[10px] uppercase tracking-[0.22em] text-[var(--text-2)]">Roblox ID</div><div>{data.roblox?.id || "—"}</div></div>
+                <div><div className="text-[10px] uppercase tracking-[0.22em] text-[var(--text-2)]">Group Rank</div><div>{data.group_role?.name || "—"}{data.group_role?.rank ? ` · ${data.group_role.rank}` : ""}</div></div>
               </div>
             </div>
-            <div className="mt-5 space-y-2 text-sm">
-              <div><div className="text-[10px] uppercase tracking-[0.22em] text-[var(--text-2)]">Roblox ID</div><div>{data.roblox?.id || "—"}</div></div>
-              <div><div className="text-[10px] uppercase tracking-[0.22em] text-[var(--text-2)]">Group Rank</div><div>{data.group_role?.name || "—"}{data.group_role?.rank ? ` · ${data.group_role.rank}` : ""}</div></div>
-            </div>
+
+            {hasPerm("players.warn") && (
+              <div className="surface p-5" data-testid="quick-punish-card">
+                <div className="text-[11px] uppercase tracking-[0.3em] text-[var(--text-2)] mb-3">Issue punishment</div>
+                <select value={pForm.type} onChange={(e) => setPForm({ ...pForm, type: e.target.value })} data-testid="qp-type"
+                  className="w-full bg-[var(--surface-2)] border border-[var(--border)] rounded-md px-3 py-2 text-sm">
+                  {P_TYPES.map(t => <option key={t}>{t}</option>)}
+                </select>
+                <textarea value={pForm.reason} onChange={(e) => setPForm({ ...pForm, reason: e.target.value })} placeholder="Reason" data-testid="qp-reason"
+                  className="mt-2 w-full bg-[var(--surface-2)] border border-[var(--border)] rounded-md px-3 py-2 text-sm min-h-[70px]" />
+                <button onClick={issuePunishment} data-testid="qp-submit" className="btn-discord mt-3 w-full rounded-md py-2 text-sm inline-flex items-center justify-center gap-2">
+                  <Plus className="h-4 w-4" /> Issue
+                </button>
+              </div>
+            )}
           </div>
 
           <div>
@@ -144,3 +178,4 @@ export default function PlayerSearch() {
     </div>
   );
 }
+

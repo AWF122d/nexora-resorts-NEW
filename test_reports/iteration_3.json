@@ -1,0 +1,58 @@
+{
+  "summary": "Iteration 3 end-to-end test. Backend: 49/49 pytest tests pass (16 iter1 + 18 iter2 + 15 new iter3). All new iter3 endpoints verified: /auth/roblox/url (configured:true + apis.roblox.com authorize URL with client_id+redirect_uri), /bot/health (running:true, token_configured:true, guild_id present), /catalog/dash-roles full CRUD, /users/{id}/assign-role applies role permissions (and dash_role_id/name), /catalog/role-links CRUD, /authorities/grant for Builderman returns roblox_user_id=156 and rank='Manager', /authorities/{id}/revoke flips active=false, /game/authority + /game/permissions + /game/punishment all 401 without X-Nexora-Game-Key and 200 with the correct key, /game/info requires settings.manage and returns game_api_key + endpoints map, /privacy alias serves the Privacy SPA page. Frontend: /hosting shows all three pills green (Token configured / Bot online / Guild 1508870679729013027) after waiting for /bot/health response, invite anchor is https://discord.com/api/oauth2/authorize?client_id=1516107062738813102&permissions=...&scope=bot+applications.commands. /role-links lets owner create a dashboard role (TEST_UI_Role_* visible after add) and add a new role-link row. /authorities grant form (auth-roblox-username + auth-rank + auth-grant) creates a row for Builderman with a Revoke button. /robloxlinking shows a Connect/Reconnect button (button, not anchor) that on click navigates to oauth.url from /api/auth/roblox/url. /privacy renders the Privacy page. /player-search → searching Builderman shows quick-punish-card with qp-type select (8 options including Warning/Note), filling qp-reason='TEST_UI_iter3_punish' + qp-submit creates a punishment that appears in the punishments-panel.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {
+        "component": "Routing — /api-integration",
+        "issue": "Page is UNREACHABLE. The route path /api-integration starts with '/api' so k8s ingress routes it to the FastAPI backend (port 8001) which returns 404 {\"detail\":\"Not Found\"} instead of the SPA. Rename the route to e.g. /integration, /game-api or /apikeys so it does not collide with the ingress '/api/*' rule. The page component (ApiPage.jsx with game-key + ingest-key + Lua snippet) itself looks fine — only the route name is wrong.",
+        "selector": "Route path=\"/api-integration\"",
+        "priority": "CRITICAL"
+      }
+    ],
+    "integration_issues": [],
+    "design_issues": [
+      {
+        "screen": "/robloxlinking",
+        "issues": ["roblox-connect-btn is a <button> with an onClick that sets window.location.href = oauth.url, so get_attribute('href') is null. Tests that assert an href on this element will fail; the button does navigate correctly to apis.roblox.com/oauth/v1/authorize on click. Cosmetic / test-only concern."]
+      },
+      {
+        "screen": "/hosting",
+        "issues": ["Pills render 'No token / Bot offline / No guild' on first paint before /bot/health resolves (~1.5s). Consider a skeleton/loading state for the pills instead of the offline-red flash."]
+      }
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_nexora_api.py",
+    "/app/backend/tests/test_nexora_iter2.py",
+    "/app/backend/tests/test_nexora_iter3.py",
+    "/app/test_reports/pytest/pytest_results.xml",
+    "/app/test_reports/pytest/iter3_results.xml"
+  ],
+  "action_items": [
+    "Rename frontend route /api-integration → e.g. /integration (or /game-api). Update App.js Route path and the Sidebar/menu link. The /api-* path will always be hijacked by the k8s ingress and route to FastAPI.",
+    "Optional: in Hosting.jsx, gate the Status pills on `health !== null` (or show a 'Loading…' pill) so users do not see a brief 'Bot offline / No token / No guild' flash on first paint."
+  ],
+  "critical_code_review_comments": [
+    "ROUTE COLLISION: /api-integration route in /app/frontend/src/App.js (line 73) is intercepted by k8s ingress because its path starts with '/api'. Verified live: GET https://nexora-admin-1.preview.emergentagent.com/api-integration returns HTTP 404 {\"detail\":\"Not Found\"} from FastAPI, not the SPA. Same risk for any future route starting with /api*.",
+    "/api/auth/roblox/callback in server.py (line 715) is decorated with `user=Depends(current_user)` — that means it needs a valid dashboard Bearer token in the X-OAuth callback POST. The frontend RobloxCallback page must include the Authorization header (it does via the shared axios instance), but if a user lands on /auth/roblox/callback while logged out (deep link from Roblox after session expiry), the exchange will 401. Consider making the callback non-auth and instead linking the resulting roblox_user_id to a pending state, or surface a 'sign in to finish linking' UX.",
+    "/api/game/info exposes the plaintext GAME_API_KEY to anyone with settings.manage. Acceptable for an owner reveal, but there is no rotation endpoint — same caveat as INGEST_SECRET.",
+    "RobloxLinking.jsx 'roblox-connect-btn' is a <button> rather than an <a href>. SEO/test contract from the iter3 spec says the element should 'point at the Roblox authorize URL'; current impl uses window.location.href in JS on click. Functionally equivalent in a real browser but breaks naive href-based checks.",
+    "Hosting.jsx renders 'Bot offline / No token / No guild' for the first ~1s while /bot/health is in flight (health initialized to null). Add a loading state guard.",
+    "/authorities/grant fires send_authority_log to Discord, but the bot is connected to Nexora Operations (#5407) which is NOT the configured DISCORD_GUILD_ID (1508870679729013027). Embed posting therefore silently fails (caught in try/except). Verified via /bot/health: running:true, but per spec the bot is not in the user's guild — this is the documented mocked state, not a bug.",
+    "Backend dependency `_game_auth` (server.py:877) compares with `!=` against the env var — when GAME_API_KEY is set to empty string, all requests would still 401 (good). However, the 401 message 'Invalid game API key' leaks the existence of the header — minor info-disclosure."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_nexora_iter3.py (new — 15 tests covering Roblox OAuth url, bot/health, dash-roles CRUD, assign-role, role-links CRUD, authorities grant/revoke, game/{authority,permissions,punishment} with and without X-Nexora-Game-Key, game/info perms, /privacy alias)"
+  ],
+  "success_rate": {"backend": "100% (49/49)", "frontend": "92% — 6/7 new flows fully verified; /api-integration unreachable"},
+  "test_credentials": "Demo owner via POST /api/auth/demo {username:'Nexora Owner', discord_id:'000000000000000000', as_owner:true}. UI: /login → 'Continue as Demo Owner'. GAME_API_KEY fetched at runtime via GET /api/game/info (owner Bearer token).",
+  "seed_data_creation": "Backend tests created TEST_-prefixed docs in dash_roles (TEST_DashRole, TEST_AssignRole), role_links (roblox_rank_name='TEST_Rank'), authorities (Builderman/Manager — revoked, kept in db but active=false), punishments (target='TEST_GamePunishTarget' reason='TEST_iter3_reason'). UI test added TEST_UI_Role_<ts> dash role and a TEST_UI_iter3_punish punishment for Builderman. All TEST_-prefixed CRUD rows were cleaned up by their test (dash-roles, role-links). Authority and punishment rows remain in db (mirrors real production behavior since revoke is soft-delete).",
+  "retest_needed": true,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Backend regression suite now spans three files: /app/backend/tests/test_nexora_api.py (16), test_nexora_iter2.py (18), test_nexora_iter3.py (15). All 49 pass. Re-run with `pytest /app/backend/tests -v`. The Builderman authority is granted then revoked by test_authorities_grant_builderman, but test_game_authority_with_key re-grants it before asserting — so order independence is fine. The /api-integration route collision is purely a frontend/ingress problem, not a server.py bug; only App.js needs a path change. After renaming, retest by navigating to the new path and verifying ApiPage renders game-key + ingest-key + Lua code. Demo owner is Roblox-linked to Builderman from iter2; iter3 grants Builderman 'Manager' authority — both states persist in mongo.",
+  "rca_of_the_issue": "Issue: /api-integration page returns 404 from FastAPI instead of rendering the React SPA. RCA: Kubernetes ingress is configured to forward every request with path prefix '/api' to backend service on port 8001 (per env spec). The React route '/api-integration' literally starts with '/api', so the ingress matches it and proxies to FastAPI before the browser ever loads the React SPA shell at that URL. FastAPI has no /api-integration route → 404. Repro: curl -i https://nexora-admin-1.preview.emergentagent.com/api-integration → HTTP/1.1 404 Not Found, body {\"detail\":\"Not Found\"}. Fix: change /app/frontend/src/App.js line 73 from path=\"/api-integration\" to a non-/api path (e.g. /integration, /apikeys, /game-api). Also update any Sidebar/menu nav-api-integration link to match. No backend change required."
+}

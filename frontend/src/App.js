@@ -18,8 +18,11 @@ import Ranking from "@/pages/Ranking";
 import Authorities from "@/pages/Authorities";
 import Forum from "@/pages/Forum";
 import Hosting from "@/pages/Hosting";
+import ApiPage from "@/pages/ApiPage";
+import RoleLinks from "@/pages/RoleLinks";
 import Settings from "@/pages/Settings";
 import RobloxLinking from "@/pages/RobloxLinking";
+import RobloxCallback from "@/pages/RobloxCallback";
 import Privacy from "@/pages/Privacy";
 import Terms from "@/pages/Terms";
 
@@ -50,7 +53,9 @@ export default function App() {
             <Route path="/" element={<Landing />} />
             <Route path="/login" element={<Login />} />
             <Route path="/auth/callback" element={<AuthCallback />} />
+            <Route path="/auth/roblox/callback" element={<RobloxCallback />} />
             <Route path="/privacy-policy" element={<Privacy />} />
+            <Route path="/privacy" element={<Privacy />} />
             <Route path="/terms" element={<Terms />} />
 
             <Route element={<Protected perm="dashboard.view"><DashboardLayout /></Protected>}>
@@ -65,8 +70,10 @@ export default function App() {
               <Route path="/authorities" element={<Protected perm="authorities.grant"><Authorities /></Protected>} />
               <Route path="/forum" element={<Forum />} />
               <Route path="/hosting" element={<Protected perm="hosting.manage"><Hosting /></Protected>} />
+              <Route path="/api-integration" element={<Protected perm="settings.manage"><ApiPage /></Protected>} />
+              <Route path="/role-links" element={<Protected perm="settings.manage"><RoleLinks /></Protected>} />
+              <Route path="/robloxlinking" element={<RobloxLinking />} />
               <Route path="/settings" element={<Protected perm="settings.manage"><Settings /></Protected>} />
-              <Route path="/robloxlinking" element={<Protected perm="roblox.link"><RobloxLinking /></Protected>} />
             </Route>
 
             <Route path="*" element={<Navigate to="/" replace />} />
