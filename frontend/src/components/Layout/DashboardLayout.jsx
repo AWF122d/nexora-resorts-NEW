@@ -8,6 +8,7 @@ import {
   CalendarRange, TrendingUp, ShieldCheck, MessagesSquare,
   Server, Settings as SettingsIcon, Link2, LogOut,
 } from "lucide-react";
+import RobloxIdentityCard from "@/components/RobloxIdentityCard";
 
 const NAV = [
   { to: "/dashboard", label: "Overview", icon: LayoutDashboard, perm: "dashboard.view" },
@@ -16,6 +17,7 @@ const NAV = [
   { to: "/events", label: "Events", icon: CalendarDays, perm: "events.create" },
   { to: "/sessions", label: "Sessions", icon: Activity, perm: "sessions.create" },
   { to: "/schedule", label: "Schedule", icon: CalendarRange, perm: "dashboard.view" },
+  { to: "/activity", label: "Activity", icon: Activity, perm: "dashboard.view" },
   { to: "/ranking", label: "Ranking", icon: TrendingUp, perm: "ranking.promote" },
   { to: "/authorities", label: "Authorities", icon: ShieldCheck, perm: "authorities.grant" },
   { to: "/forum", label: "Forum", icon: MessagesSquare, perm: "dashboard.view" },
@@ -58,18 +60,8 @@ export default function DashboardLayout() {
             </NavLink>
           ))}
         </nav>
-        <div className="border-t border-[var(--border)] p-3 space-y-2">
-          <div className="flex items-center gap-2">
-            <div className="h-8 w-8 rounded-full bg-nx-gold/20 grid place-items-center text-xs">
-              {user?.username?.[0]?.toUpperCase() || "N"}
-            </div>
-            <div className="min-w-0">
-              <div className="text-sm truncate">{user?.username}</div>
-              <div className="text-[10px] uppercase tracking-[0.2em] text-[var(--text-2)] truncate">
-                {user?.roles?.[0] || "member"}
-              </div>
-            </div>
-          </div>
+        <div className="border-t border-[var(--border)] p-3 space-y-3">
+          <RobloxIdentityCard />
           <div className="flex items-center gap-2">
             <ThemeToggle className="flex-1 justify-center" />
             <button

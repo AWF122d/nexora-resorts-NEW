@@ -49,8 +49,9 @@ def test_health(session):
     assert r.status_code == 200
     d = r.json()
     assert d["ok"] is True
-    assert d["bot"] == "demo"
-    assert d["oauth"] == "demo"
+    # Iteration 2: bot + oauth are now configured
+    assert d["bot"] in ("configured", "demo")
+    assert d["oauth"] in ("configured", "demo")
     assert d["guild"] == "1508870679729013027"
 
 
@@ -71,8 +72,12 @@ def test_discord_oauth_url_demo(session):
     r = session.get(f"{API}/auth/discord/url")
     assert r.status_code == 200
     d = r.json()
-    assert d["configured"] is False
-    assert d["url"] is None
+    # Iteration 2: configured may be True now
+    assert "configured" in d
+    if d["configured"]:
+        assert isinstance(d["url"], str) and "discord.com" in d["url"]
+    else:
+        assert d["url"] is None
 
 
 # ---------- Rooms ----------

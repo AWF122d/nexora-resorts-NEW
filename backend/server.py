@@ -67,6 +67,8 @@ DEFAULT_PERMISSIONS = [
     "events.manage",
     "sessions.create",
     "sessions.manage",
+    "sessions.view_active",
+    "sessions.view_logs",
     "ranking.promote",
     "ranking.demote",
     "authorities.grant",
@@ -76,6 +78,47 @@ DEFAULT_PERMISSIONS = [
     "settings.manage",
     "roblox.link",
 ]
+
+ROBLOX_GROUP_ID = os.environ.get("ROBLOX_GROUP_ID", "")
+ROBLOX_OPEN_CLOUD_API_KEY = os.environ.get("ROBLOX_OPEN_CLOUD_API_KEY", "")
+INGEST_SECRET = os.environ.get("INGEST_SECRET", "")
+
+# ---------- Roblox helpers ----------
+async def roblox_user_by_name(username: str) -> Optional[dict]:
+    try:
+        async with httpx.AsyncClient(timeout=10) as c:
+            r = await c.post("https://users.roblox.com/v1/usernames/users",
+                             json={"usernames": [username], "excludeBannedUsers": False})
+            if r.status_code != 200: return None
+            data = r.json().get("data") or []
+            if not data: return None
+            u = data[0]
+            # headshot
+            h = await c.get(
+                "https://thumbnails.roblox.com/v1/users/avatar-headshot",
+                params={"userIds": u["id"], "size": "150x150", "format": "Png", "isCircular": "true"},
+            )
+            avatar = None
+            if h.status_code == 200:
+                hd = h.json().get("data") or []
+                if hd: avatar = hd[0].get("imageUrl")
+            return {"id": u["id"], "name": u["name"], "display_name": u.get("displayName"), "avatar": avatar}
+    except Exception as e:
+        log.warning("roblox lookup failed: %s", e)
+        return None
+
+async def roblox_group_role(user_id: int) -> Optional[dict]:
+    if not ROBLOX_GROUP_ID: return None
+    try:
+        async with httpx.AsyncClient(timeout=10) as c:
+            r = await c.get(f"https://groups.roblox.com/v2/users/{user_id}/groups/roles")
+            if r.status_code != 200: return None
+            for g in (r.json().get("data") or []):
+                if str(g.get("group", {}).get("id")) == str(ROBLOX_GROUP_ID):
+                    return {"name": g["role"]["name"], "rank": g["role"]["rank"]}
+            return {"name": "Guest", "rank": 0}
+    except Exception:
+        return None
 
 # ---------- Models ----------
 class User(BaseModel):
@@ -405,7 +448,206 @@ async def bot_status(user=Depends(current_user)):
         "owner_id": OWNER_DISCORD_ID,
     }
 
-# ---------- Mount ----------
+# ----- Roblox lookups -----
+@api.get("/roblox/user")
+async def roblox_user(username: str, user=Depends(current_user)):
+    u = await roblox_user_by_name(username)
+    if not u:
+        raise HTTPException(404, "Roblox user not found")
+    role = await roblox_group_role(u["id"])
+    return {"user": u, "group_role": role, "group_id": ROBLOX_GROUP_ID}
+
+class LinkRobloxIn(BaseModel):
+    username: str
+
+@api.post("/me/roblox/link")
+async def link_my_roblox(body: LinkRobloxIn, user=Depends(current_user)):
+    u = await roblox_user_by_name(body.username)
+    if not u:
+        raise HTTPException(404, "Roblox user not found")
+    role = await roblox_group_role(u["id"]) or {"name": "Guest", "rank": 0}
+    await db.users.update_one(
+        {"discord_id": user["discord_id"]},
+        {"$set": {
+            "roblox_username": u["name"],
+            "roblox_user_id": u["id"],
+            "roblox_avatar": u["avatar"],
+            "roblox_group_role": role,
+        }},
+    )
+    return {"ok": True, "roblox": u, "group_role": role}
+
+# ----- Catalogs (session types, room types) -----
+class SessionType(BaseModel):
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    name: str
+    required_attendees: int = 5
+    phases: List[str] = ["Phase 1"]
+
+class RoomType(BaseModel):
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    name: str
+    description: str = ""
+    image: str = ""
+    checkmein_link: str = ""
+    gamepass_id: str = ""
+
+@api.get("/catalog/session-types")
+async def list_session_types():
+    items = await db.session_types.find({}, {"_id": 0}).to_list(200)
+    if not items:
+        for n, req, ph in [
+            ("Training", 5, ["Briefing", "Drills", "Scenario", "Debrief"]),
+            ("Shift", 4, ["Open", "Operations", "Close"]),
+            ("Tryouts", 6, ["Greeting", "Tests", "Decisions"]),
+            ("Inspection", 3, ["Inspection", "Report"]),
+            ("Interview", 2, ["Interview", "Outcome"]),
+        ]:
+            await db.session_types.insert_one(SessionType(name=n, required_attendees=req, phases=ph).model_dump())
+        items = await db.session_types.find({}, {"_id": 0}).to_list(200)
+    return {"items": items}
+
+@api.post("/catalog/session-types")
+async def create_session_type(body: SessionType, user=Depends(require_perm("settings.manage"))):
+    await db.session_types.insert_one(body.model_dump())
+    return body
+
+@api.put("/catalog/session-types/{sid}")
+async def update_session_type(sid: str, body: SessionType, user=Depends(require_perm("settings.manage"))):
+    await db.session_types.update_one({"id": sid}, {"$set": body.model_dump(exclude={"id"})})
+    return {"ok": True}
+
+@api.delete("/catalog/session-types/{sid}")
+async def delete_session_type(sid: str, user=Depends(require_perm("settings.manage"))):
+    await db.session_types.delete_one({"id": sid})
+    return {"ok": True}
+
+@api.get("/catalog/room-types")
+async def list_room_types():
+    items = await db.room_types.find({}, {"_id": 0}).to_list(200)
+    return {"items": items}
+
+@api.post("/catalog/room-types")
+async def create_room_type(body: RoomType, user=Depends(require_perm("settings.manage"))):
+    await db.room_types.insert_one(body.model_dump())
+    if body.image:
+        # mirror to legacy rooms collection so Bookings page also reflects it
+        await db.rooms.insert_one(Room(name=body.name, description=body.description, image=body.image,
+                                       gamepass_id=body.gamepass_id or None).model_dump())
+    return body
+
+@api.put("/catalog/room-types/{rid}")
+async def update_room_type(rid: str, body: RoomType, user=Depends(require_perm("settings.manage"))):
+    await db.room_types.update_one({"id": rid}, {"$set": body.model_dump(exclude={"id"})})
+    return {"ok": True}
+
+@api.delete("/catalog/room-types/{rid}")
+async def delete_room_type(rid: str, user=Depends(require_perm("settings.manage"))):
+    await db.room_types.delete_one({"id": rid})
+    return {"ok": True}
+
+# ----- Player aggregate (search by Roblox username) -----
+@api.get("/players/lookup")
+async def players_lookup(username: str, user=Depends(require_perm("players.view"))):
+    rb = await roblox_user_by_name(username)
+    role = await roblox_group_role(rb["id"]) if rb else None
+    name_l = username.lower()
+    chat_logs = await db.chatlogs.find({"username_l": name_l}, {"_id": 0}).sort("created_at", -1).to_list(500)
+    admin_logs = await db.adminlogs.find({"username_l": name_l}, {"_id": 0}).sort("created_at", -1).to_list(500)
+    punishments = await db.punishments.find({"target": {"$regex": f"^{username}$", "$options": "i"}}, {"_id": 0}).sort("created_at", -1).to_list(500)
+    sessions_hosted = await db.sessions.find({"host": {"$regex": f"^{username}$", "$options": "i"}}, {"_id": 0}).to_list(500)
+    sessions_attended = await db.sessions.find({"attendees": name_l}, {"_id": 0}).to_list(500)
+    sessions_cohosted = await db.sessions.find({"co_hosts": name_l}, {"_id": 0}).to_list(500)
+    sessions_supervised = await db.sessions.find({"supervisor": {"$regex": f"^{username}$", "$options": "i"}}, {"_id": 0}).to_list(500)
+    return {
+        "roblox": rb,
+        "group_role": role,
+        "chat_logs": chat_logs,
+        "admin_logs": admin_logs,
+        "punishments": punishments,
+        "sessions": {
+            "hosted": sessions_hosted,
+            "attended": sessions_attended,
+            "cohosted": sessions_cohosted,
+            "supervised": sessions_supervised,
+        },
+    }
+
+# ----- Ingest (game → website) -----
+def _check_ingest(secret: Optional[str]):
+    if not INGEST_SECRET or secret != INGEST_SECRET:
+        raise HTTPException(401, "Invalid ingest secret")
+
+class ChatLogIn(BaseModel):
+    secret: str
+    username: str
+    message: str
+    server_id: Optional[str] = None
+    place_id: Optional[str] = None
+    filtered: Optional[bool] = False
+
+@api.post("/ingest/chatlog")
+async def ingest_chatlog(body: ChatLogIn):
+    _check_ingest(body.secret)
+    doc = {
+        "id": str(uuid.uuid4()),
+        "username": body.username,
+        "username_l": body.username.lower(),
+        "message": body.message,
+        "server_id": body.server_id,
+        "place_id": body.place_id,
+        "filtered": bool(body.filtered),
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    await db.chatlogs.insert_one(doc); doc.pop("_id", None)
+    return {"ok": True}
+
+class AdminLogIn(BaseModel):
+    secret: str
+    username: str
+    command: str
+    target: Optional[str] = None
+    args: Optional[str] = None
+    server_id: Optional[str] = None
+
+@api.post("/ingest/adminlog")
+async def ingest_adminlog(body: AdminLogIn):
+    _check_ingest(body.secret)
+    doc = {
+        "id": str(uuid.uuid4()),
+        "username": body.username,
+        "username_l": body.username.lower(),
+        "command": body.command,
+        "target": body.target,
+        "args": body.args,
+        "server_id": body.server_id,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    await db.adminlogs.insert_one(doc); doc.pop("_id", None)
+    return {"ok": True}
+
+@api.get("/ingest/info")
+async def ingest_info(user=Depends(require_perm("settings.manage"))):
+    return {"ingest_secret": INGEST_SECRET, "endpoints": ["/api/ingest/chatlog", "/api/ingest/adminlog"]}
+
+# ----- Activity (API-managed feed of recent system events) -----
+@api.get("/activity")
+async def activity(user=Depends(current_user)):
+    items = []
+    cursors = [
+        ("booking", db.bookings.find({}, {"_id": 0}).sort("created_at", -1).limit(20)),
+        ("punishment", db.punishments.find({}, {"_id": 0}).sort("created_at", -1).limit(20)),
+        ("event", db.events.find({}, {"_id": 0}).sort("created_at", -1).limit(20)),
+        ("session", db.sessions.find({}, {"_id": 0}).sort("created_at", -1).limit(20)),
+        ("authority", db.authorities.find({}, {"_id": 0}).sort("created_at", -1).limit(20)),
+    ]
+    for kind, cur in cursors:
+        async for doc in cur:
+            items.append({"kind": kind, **doc})
+    items.sort(key=lambda x: x.get("created_at", ""), reverse=True)
+    return {"items": items[:80]}
+
+# ----- Mount -----
 app.include_router(api)
 
 app.add_middleware(

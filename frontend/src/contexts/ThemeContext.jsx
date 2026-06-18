@@ -7,8 +7,9 @@ export function ThemeProvider({ children }) {
   const [theme, setTheme] = useState(() => localStorage.getItem("nx_theme") || "dark");
   useEffect(() => {
     document.documentElement.setAttribute("data-theme", theme);
-    if (theme === "light") document.documentElement.classList.remove("dark");
-    else document.documentElement.classList.add("dark");
+    const cl = document.documentElement.classList;
+    cl.remove("dark", "light", "blurple");
+    cl.add(theme);
     localStorage.setItem("nx_theme", theme);
   }, [theme]);
 

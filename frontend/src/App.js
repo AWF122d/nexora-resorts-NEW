@@ -13,6 +13,7 @@ import PlayerSearch from "@/pages/PlayerSearch";
 import Events from "@/pages/Events";
 import Sessions from "@/pages/Sessions";
 import Schedule from "@/pages/Schedule";
+import ActivityPage from "@/pages/Activity";
 import Ranking from "@/pages/Ranking";
 import Authorities from "@/pages/Authorities";
 import Forum from "@/pages/Forum";
@@ -59,6 +60,7 @@ export default function App() {
               <Route path="/events" element={<Protected perm="events.create"><Events /></Protected>} />
               <Route path="/sessions" element={<Protected perm="sessions.create"><Sessions /></Protected>} />
               <Route path="/schedule" element={<Schedule />} />
+              <Route path="/activity" element={<ActivityPage />} />
               <Route path="/ranking" element={<Protected perm="ranking.promote"><Ranking /></Protected>} />
               <Route path="/authorities" element={<Protected perm="authorities.grant"><Authorities /></Protected>} />
               <Route path="/forum" element={<Forum />} />
