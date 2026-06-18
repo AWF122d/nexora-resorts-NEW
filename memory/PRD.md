@@ -45,3 +45,24 @@ User asked for a full Roblox-community management platform for "Nexora Resorts" 
 4. Roblox gamepass verification + Open Cloud ranking call.
 5. Forum threads page with proper threading/replies + moderation actions.
 6. Real container-backed multi-bot hosting.
+
+## Iteration 2 — Feb 18, 2026 (real data + owner config)
+- Live Discord OAuth + bot **configured** (credentials in .env).
+- Live Roblox user lookup (users + thumbnails + group-role v2 API).
+- Sidebar identity: Roblox avatar + username + group rank with one-click `Link Roblox`.
+- Session types catalog (Settings → Session Types). Sessions page is now a dropdown sourced from this catalog with required attendees + phase checklist.
+- Room types catalog (Settings → Room Types) with CheckMeIn link field + gamepass ID; Bookings page reads from this catalog and opens CheckMeIn link in new tab.
+- Player Search: searches Roblox username → live identity card + tabs (Chat / Admin / Sessions / Punishments). Sessions bucketed by hosted/cohosted/supervised/attended.
+- Activity page (`/activity`) from `/api/activity` (unified feed: bookings, sessions, events, punishments, authorities).
+- Game ingest: `POST /api/ingest/chatlog` and `POST /api/ingest/adminlog` secured by `INGEST_SECRET` (revealed in Settings).
+- New permissions: `sessions.view_active`, `sessions.view_logs`.
+- Theme toggle cycles dark → light → blurple (bug fixed).
+- 34/34 backend tests pass.
+
+## Still mocked / deferred (P1)
+- Real Discord bot worker (slash commands /book, posting to log channels) — bot is online-token-ready but no command handler.
+- Roblox Open Cloud ranking call (button currently toast-only).
+- Gamepass ownership verification (always passes).
+- Multi-bot sandboxed hosting (UI only).
+- Session phases full lifecycle: grading tab, ranking tab, marking (Passed / Hardest Associate), final summary.
+- Forum threading + replies + moderation.
