@@ -123,6 +123,29 @@ async def roblox_group_role(user_id: int) -> Optional[dict]:
     except Exception:
         return None
 
+async def roblox_group_roles_all() -> List[dict]:
+    if not ROBLOX_GROUP_ID: return []
+    try:
+        async with httpx.AsyncClient(timeout=10) as c:
+            r = await c.get(f"https://groups.roblox.com/v1/groups/{ROBLOX_GROUP_ID}/roles")
+            if r.status_code != 200: return []
+            return r.json().get("roles") or []
+    except Exception:
+        return []
+
+async def roblox_set_rank(user_id: int, role_id: int) -> dict:
+    """Set a user's rank in the group via Open Cloud (legacy v1 endpoint accepts API key)."""
+    if not (ROBLOX_GROUP_ID and ROBLOX_OPEN_CLOUD_API_KEY):
+        raise HTTPException(400, "Roblox group / open cloud not configured")
+    url = f"https://groups.roblox.com/v1/groups/{ROBLOX_GROUP_ID}/users/{user_id}"
+    async with httpx.AsyncClient(timeout=15) as c:
+        r = await c.patch(url, json={"roleId": role_id},
+                          headers={"x-api-key": ROBLOX_OPEN_CLOUD_API_KEY,
+                                   "Content-Type": "application/json"})
+        if r.status_code not in (200, 204):
+            raise HTTPException(400, f"Roblox rank update failed: {r.status_code} {r.text}")
+    return {"ok": True}
+
 # ---------- Models ----------
 class User(BaseModel):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
@@ -427,14 +450,27 @@ async def col_create(name: str, body: Dict[str, Any], user=Depends(current_user)
             if mid:
                 await db.punishments.update_one({"id": doc["id"]}, {"$set": {"discord_message_id": mid}})
         elif name == "sessions":
-            await _b.send_session_log(
+            # Look up host's registered game server (if recent).
+            join_link = None
+            host_rb_id = doc.get("host_roblox_user_id") or (
+                (await db.users.find_one({"discord_id": user.get("discord_id")}, {"_id": 0}) or {}).get("roblox_user_id")
+            )
+            if host_rb_id:
+                gs = await db.game_servers.find_one({"host_roblox_id": int(host_rb_id)}, {"_id": 0})
+                if gs: join_link = gs.get("join_link")
+            mid = await _b.send_session_log(
                 session_type=doc.get("session_type") or "Session",
                 host=doc.get("host") or user.get("username") or "—",
-                attendees=list(doc.get("attendees") or []),
+                attendees_count=int(doc.get("required_attendees") or 0),
                 co_hosts=list(doc.get("co_hosts") or []),
                 support=list(doc.get("support_staff") or []),
-                supervisor=doc.get("supervisor"),
+                supervisors=list(doc.get("supervisors") or ([doc["supervisor"]] if doc.get("supervisor") else [])),
+                phases=list(doc.get("phases") or []),
+                current_phase=int(doc.get("phase_progress") or 0),
+                join_link=join_link,
             )
+            if mid:
+                await db.sessions.update_one({"id": doc["id"]}, {"$set": {"discord_message_id": mid, "join_link": join_link}})
         elif name == "events":
             mid = await _b.send_event_log(
                 title=doc.get("title") or "Event",
@@ -458,8 +494,57 @@ async def col_delete(name: str, item_id: str, user=Depends(current_user)):
     perm = COLLECTIONS[name]
     if perm not in user.get("permissions", []) and "owner" not in user.get("roles", []):
         raise HTTPException(403, f"Missing permission: {perm}")
+    # Side-effect: if this is a session, remove the embed from the channel.
+    if name == "sessions":
+        s = await db[name].find_one({"id": item_id}, {"_id": 0})
+        if s and s.get("discord_message_id"):
+            try:
+                import discord_bot as _b
+                await _b.delete_session_message(int(s["discord_message_id"]))
+            except Exception:
+                pass
     res = await db[name].delete_one({"id": item_id})
     return {"ok": res.deleted_count == 1}
+
+@api.post("/sessions/{sid}/advance")
+async def session_advance(sid: str, user=Depends(require_perm("sessions.create"))):
+    s = await db.sessions.find_one({"id": sid}, {"_id": 0})
+    if not s: raise HTTPException(404, "Session not found")
+    phases = list(s.get("phases") or [])
+    cur = int(s.get("phase_progress") or 0) + 1
+    if cur > len(phases):
+        cur = len(phases)
+    await db.sessions.update_one({"id": sid}, {"$set": {"phase_progress": cur}})
+    try:
+        import discord_bot as _b
+        if s.get("discord_message_id"):
+            await _b.update_session_embed(
+                message_id=int(s["discord_message_id"]),
+                session_type=s.get("session_type") or "Session",
+                host=s.get("host") or "—",
+                attendees_count=int(s.get("required_attendees") or 0),
+                co_hosts=list(s.get("co_hosts") or []),
+                support=list(s.get("support_staff") or []),
+                supervisors=list(s.get("supervisors") or ([s["supervisor"]] if s.get("supervisor") else [])),
+                phases=phases, current_phase=cur,
+                join_link=s.get("join_link"),
+            )
+    except Exception as e:
+        log.warning("advance embed update failed: %s", e)
+    return {"ok": True, "current_phase": cur, "total_phases": len(phases)}
+
+@api.post("/sessions/{sid}/end")
+async def session_end(sid: str, user=Depends(require_perm("sessions.create"))):
+    s = await db.sessions.find_one({"id": sid}, {"_id": 0})
+    if not s: raise HTTPException(404, "Session not found")
+    await db.sessions.update_one({"id": sid}, {"$set": {"status": "ended", "ended_at": datetime.now(timezone.utc).isoformat(), "ended_by": user["username"]}})
+    try:
+        import discord_bot as _b
+        if s.get("discord_message_id"):
+            await _b.delete_session_message(int(s["discord_message_id"]))
+    except Exception:
+        pass
+    return {"ok": True}
 
 # ----- Bot status -----
 @api.get("/bot/status")
@@ -934,6 +1019,103 @@ async def bot_health(user=Depends(current_user)):
         "token_configured": bool(DISCORD_BOT_TOKEN),
         "log_channels": LOG_CHANNELS,
     }
+
+@api.post("/ranking/sweep")
+async def ranking_sweep(user=Depends(require_perm("ranking.promote"))):
+    """Walk every linked user and demote anyone who has left the group to rank 241."""
+    roles = await roblox_group_roles_all()
+    target = next((r for r in roles if int(r.get("rank", 0)) == DEFAULT_OUT_OF_GROUP_RANK_ID), None)
+    if not target:
+        raise HTTPException(400, f"No role found at rank {DEFAULT_OUT_OF_GROUP_RANK_ID}")
+    changed = []
+    skipped = 0
+    async for u in db.users.find({"roblox_user_id": {"$exists": True, "$ne": None}}, {"_id": 0}):
+        try:
+            role = await roblox_group_role(u["roblox_user_id"])
+            if role and role.get("rank", 0) == 0:
+                await roblox_set_rank(int(u["roblox_user_id"]), int(target["id"]))
+                changed.append(u.get("roblox_username") or u["roblox_user_id"])
+            else:
+                skipped += 1
+        except Exception as e:
+            log.warning("sweep error for %s: %s", u.get("roblox_user_id"), e)
+    return {"changed": changed, "skipped": skipped}
+
+@api.post("/ranking/set")
+async def ranking_set(body: Dict[str, Any], user=Depends(require_perm("ranking.promote"))):
+    """Set a Roblox group rank for a user. body: {roblox_user_id, role_id} OR {username, role_id}."""
+    rid = body.get("roblox_user_id")
+    if not rid and body.get("username"):
+        rb = await roblox_user_by_name(body["username"])
+        if rb: rid = rb["id"]
+    role_id = body.get("role_id")
+    if not (rid and role_id):
+        raise HTTPException(400, "roblox_user_id and role_id required")
+    await roblox_set_rank(int(rid), int(role_id))
+    # Find the role name for logging
+    roles = await roblox_group_roles_all()
+    role = next((r for r in roles if int(r["id"]) == int(role_id)), None)
+    rname = role["name"] if role else str(role_id)
+    try:
+        import discord_bot as _b
+        await _b.send_ranking_log(target=body.get("username") or str(rid), new_rank=rname, by=user["username"])
+    except Exception:
+        pass
+    return {"ok": True, "role": role}
+
+@api.get("/roblox/group/roles")
+async def get_group_roles(user=Depends(current_user)):
+    return {"roles": await roblox_group_roles_all()}
+
+# Default Roblox rank fallback for users that have left the group.
+DEFAULT_OUT_OF_GROUP_RANK_ID = 241
+
+@api.post("/ranking/normalize")
+async def ranking_normalize(body: Dict[str, Any], user=Depends(require_perm("ranking.promote"))):
+    """If the user is NOT in the group, set them to the configured fallback role (rank 241 / Recreation Staff)."""
+    name = body.get("username")
+    rb = await roblox_user_by_name(name) if name else None
+    if not rb: raise HTTPException(404, "Roblox user not found")
+    role = await roblox_group_role(rb["id"])
+    if role and role["rank"] != 0:
+        return {"ok": True, "skipped": True, "reason": "User already in group", "current": role}
+    # find role id for rank 241 in group
+    roles = await roblox_group_roles_all()
+    target = next((r for r in roles if int(r.get("rank", 0)) == DEFAULT_OUT_OF_GROUP_RANK_ID), None)
+    if not target:
+        raise HTTPException(400, f"No role found at rank {DEFAULT_OUT_OF_GROUP_RANK_ID}")
+    await roblox_set_rank(rb["id"], int(target["id"]))
+    return {"ok": True, "set_to": target}
+
+# ----- In-game server registry (host's current server) -----
+class GameServerIn(BaseModel):
+    secret: str
+    host_roblox_id: int
+    place_id: int
+    job_id: str
+    join_link: Optional[str] = None
+
+@api.post("/game/server-status")
+async def register_server(body: GameServerIn):
+    _check_ingest(body.secret)
+    doc = {
+        "id": str(uuid.uuid4()),
+        "host_roblox_id": int(body.host_roblox_id),
+        "place_id": int(body.place_id),
+        "job_id": body.job_id,
+        "join_link": body.join_link or f"https://www.roblox.com/games/start?placeId={body.place_id}&launchData={body.job_id}",
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    await db.game_servers.update_one(
+        {"host_roblox_id": int(body.host_roblox_id)},
+        {"$set": doc}, upsert=True,
+    )
+    return {"ok": True}
+
+@api.get("/game/server-status")
+async def get_server(host_roblox_id: int, user=Depends(current_user)):
+    s = await db.game_servers.find_one({"host_roblox_id": int(host_roblox_id)}, {"_id": 0})
+    return {"server": s}
 
 # ----- Mount -----
 app.include_router(api)

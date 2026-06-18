@@ -58,7 +58,7 @@ async def _channel(kind: str) -> Optional[discord.TextChannel]:
             return None
     return ch
 
-def _e(title: str, color: int = 0xD4AF37) -> discord.Embed:
+def _e(title: str, color: int = 0x2563EB) -> discord.Embed:
     e = discord.Embed(title=title, color=color)
     e.set_footer(text="Nexora Resorts")
     return e
@@ -66,7 +66,7 @@ def _e(title: str, color: int = 0xD4AF37) -> discord.Embed:
 async def send_punishment_log(*, target: str, p_type: str, reason: str, issued_by: str) -> Optional[int]:
     ch = await _channel("punishment")
     if not ch: return None
-    e = _e(f"NEXORA · {p_type}", 0xE5484D)
+    e = _e(f"NEXORA · {p_type}", 0x2563EB)
     e.add_field(name="Target", value=target, inline=True)
     e.add_field(name="Issued by", value=issued_by, inline=True)
     e.add_field(name="Reason", value=reason or "—", inline=False)
@@ -85,7 +85,7 @@ async def reply_revert(channel_kind: str, message_id: int, *, by: str, note: str
 async def send_ranking_log(*, target: str, new_rank: str, by: str) -> Optional[int]:
     ch = await _channel("ranking")
     if not ch: return None
-    e = _e("NEXORA · Promotion", 0x16A34A)
+    e = _e("NEXORA · Rank change", 0x2563EB)
     e.add_field(name="User", value=target, inline=True)
     e.add_field(name="New rank", value=new_rank, inline=True)
     e.add_field(name="By", value=by, inline=False)
@@ -96,24 +96,94 @@ async def send_authority_log(*, roblox_username: str, discord_id: str, rank: str
     ch = await _channel("authority")
     if not ch: return None
     from datetime import datetime, timezone
-    e = _e("NEXORA · Authority granted", 0x8B5CF6)
+    e = _e("NEXORA · Authority granted", 0x2563EB)
     e.description = f"**{roblox_username}** `{discord_id}` granted authority **{rank}**\n"\
                     f"<t:{int(datetime.now(timezone.utc).timestamp())}:F>\nGranted by **{by}**"
     m = await ch.send(embed=e)
     return m.id
 
-async def send_session_log(*, session_type: str, host: str, attendees: List[str], co_hosts: List[str],
-                           support: List[str], supervisor: Optional[str]) -> Optional[int]:
+async def send_session_log(*, session_type: str, host: str, attendees_count: int,
+                           co_hosts: List[str], support: List[str], supervisors: List[str],
+                           phases: List[str], current_phase: int = 0,
+                           join_link: Optional[str] = None,
+                           subtitle: str = "Nexora Resorts") -> Optional[int]:
+    """Posts the session embed. Returns the message id so it can be edited/deleted later."""
     ch = await _channel("sessions")
-    if not ch: return None
-    e = _e(f"NEXORA SESSIONS · {session_type}", 0x0EA5E9)
-    e.add_field(name="Host", value=host, inline=True)
-    if supervisor: e.add_field(name="Supervisor", value=supervisor, inline=True)
-    if co_hosts:   e.add_field(name="Co-hosts", value="\n".join(co_hosts), inline=False)
-    if support:    e.add_field(name="Support staff", value="\n".join(support), inline=False)
-    if attendees:  e.add_field(name="Attendees", value="\n".join(attendees), inline=False)
+    if not ch:
+        return None
+    e = discord.Embed(
+        title=f"Starting {session_type}",
+        description=(f"**Starting**\n{attendees_count} Attendees\n"
+                     f"Click **[here]({join_link})** to join the server." if join_link
+                     else f"**Starting**\n{attendees_count} Attendees"),
+        color=0x2563EB,  # blue
+    )
+    e.set_author(name="Nexora Sessions")
+
+    # Build a structured "card" using fields so it visually mimics the requested layout.
+    def _column(lines: List[str]) -> str:
+        return "\n".join(lines) if lines else "—"
+
+    high_command = []
+    if host:        high_command.append("**Host**")
+    for _ in supervisors: high_command.append("**Supervisor**")
+    co = ["**Co-Host**" for _ in co_hosts]
+    helpers = ["**Helper**" for _ in support]
+
+    if any([high_command, co, helpers]):
+        e.add_field(name=f"__{session_type}__", value=subtitle, inline=False)
+        e.add_field(name="High Command", value=_column(high_command), inline=True)
+        e.add_field(name="Co-Hosts",     value=_column(co),           inline=True)
+        e.add_field(name="Helpers",      value=_column(helpers),      inline=True)
+
+    if phases:
+        chips = []
+        for i, p in enumerate(phases):
+            if i < current_phase:
+                chips.append(f"~~{p}~~")
+            elif i == current_phase:
+                chips.append(f"**{p}**")
+            else:
+                chips.append(p)
+        e.add_field(name="\u200b", value=" • ".join(chips), inline=False)
+
+    e.set_footer(text="Nexora Resorts")
     m = await ch.send(embed=e)
     return m.id
+
+async def update_session_embed(message_id: int, *, session_type: str, host: str,
+                               attendees_count: int, co_hosts: List[str], support: List[str],
+                               supervisors: List[str], phases: List[str], current_phase: int,
+                               join_link: Optional[str] = None,
+                               subtitle: str = "Nexora Resorts") -> bool:
+    ch = await _channel("sessions")
+    if not ch or not message_id: return False
+    try:
+        msg = await ch.fetch_message(message_id)
+        new_id = await send_session_log(
+            session_type=session_type, host=host, attendees_count=attendees_count,
+            co_hosts=co_hosts, support=support, supervisors=supervisors,
+            phases=phases, current_phase=current_phase, join_link=join_link, subtitle=subtitle,
+        )
+        # Build the same embed but use msg.edit so we keep the message id
+        if new_id:
+            # Edit existing using fresh embed
+            sent = await ch.fetch_message(new_id)
+            await msg.edit(embed=sent.embeds[0])
+            await sent.delete()
+        return True
+    except Exception as e:
+        log.warning("update_session_embed failed: %s", e)
+        return False
+
+async def delete_session_message(message_id: int):
+    ch = await _channel("sessions")
+    if not ch or not message_id: return
+    try:
+        msg = await ch.fetch_message(message_id)
+        await msg.delete()
+    except Exception as e:
+        log.warning("session delete failed: %s", e)
 
 async def send_event_log(*, title: str, when: str, host: str, co_host: Optional[str],
                          supervisor: Optional[str], description: str, game_link: Optional[str]) -> Optional[int]:
