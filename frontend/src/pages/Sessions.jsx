@@ -66,7 +66,7 @@ export default function Sessions() {
     <div data-testid="sessions-page">
       <div className="text-[11px] uppercase tracking-[0.3em] text-[var(--text-2)]">Operations</div>
       <h1 className="font-serif text-4xl mt-2">Sessions</h1>
-      <p className="text-[var(--text-2)] mt-2 max-w-2xl">Pick a session type, start, and the embed is posted to your Sessions channel using your active game server's join link.</p>
+      <p className="text-[var(--text-2)] mt-2 max-w-2xl">Pick a session type and start. You must be currently in your Roblox game (the in-game script registers your server) — otherwise the start button will refuse.</p>
 
       {hasPerm("sessions.create") && (
         <div className="surface mt-6 p-5 flex flex-wrap items-center gap-3">

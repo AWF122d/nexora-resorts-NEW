@@ -430,6 +430,23 @@ async def col_create(name: str, body: Dict[str, Any], user=Depends(current_user)
     perm = COLLECTIONS[name]
     if perm not in user.get("permissions", []) and "owner" not in user.get("roles", []):
         raise HTTPException(403, f"Missing permission: {perm}")
+
+    # ---- HOST-IN-GAME GATE for sessions ----
+    if name == "sessions":
+        host_rb_id = body.get("host_roblox_user_id") or user.get("roblox_user_id")
+        if not host_rb_id:
+            raise HTTPException(400, "Link your Roblox account before hosting a session.")
+        recent = await db.game_servers.find_one({"host_roblox_id": int(host_rb_id)}, {"_id": 0})
+        if not recent:
+            raise HTTPException(400, "You aren't in any registered game server. Join your Roblox game first.")
+        # Reject if the registered server is older than 30 minutes
+        try:
+            ts = datetime.fromisoformat(recent.get("created_at").replace("Z", "+00:00"))
+            if (datetime.now(timezone.utc) - ts).total_seconds() > 1800:
+                raise HTTPException(400, "Your last server check-in expired. Re-join your Roblox game.")
+        except HTTPException: raise
+        except Exception: pass
+
     doc = {
         "id": str(uuid.uuid4()),
         "created_at": datetime.now(timezone.utc).isoformat(),
@@ -458,6 +475,8 @@ async def col_create(name: str, body: Dict[str, Any], user=Depends(current_user)
             if host_rb_id:
                 gs = await db.game_servers.find_one({"host_roblox_id": int(host_rb_id)}, {"_id": 0})
                 if gs: join_link = gs.get("join_link")
+            base_url = os.environ.get("PUBLIC_BASE_URL", "")
+            detail_url = f"{base_url}/sessions/{doc['id']}" if base_url else None
             mid = await _b.send_session_log(
                 session_type=doc.get("session_type") or "Session",
                 host=doc.get("host") or user.get("username") or "—",
@@ -468,9 +487,10 @@ async def col_create(name: str, body: Dict[str, Any], user=Depends(current_user)
                 phases=list(doc.get("phases") or []),
                 current_phase=int(doc.get("phase_progress") or 0),
                 join_link=join_link,
+                detail_url=detail_url,
             )
             if mid:
-                await db.sessions.update_one({"id": doc["id"]}, {"$set": {"discord_message_id": mid, "join_link": join_link}})
+                await db.sessions.update_one({"id": doc["id"]}, {"$set": {"discord_message_id": mid, "join_link": join_link, "detail_url": detail_url}})
         elif name == "events":
             mid = await _b.send_event_log(
                 title=doc.get("title") or "Event",
@@ -810,6 +830,31 @@ async def roblox_callback(body: RobloxCallbackIn, user=Depends(current_user)):
             "roblox_group_role": role,
         }},
     )
+    # Auto-sync Discord & dashboard roles based on role-link mappings
+    updated = await db.users.find_one({"discord_id": user["discord_id"]}, {"_id": 0})
+    try:
+        link = await db.role_links.find_one({"roblox_rank": int(role.get("rank") or 0)}, {"_id": 0})
+        if link:
+            perms = list(updated.get("permissions") or [])
+            dash_role_id = dash_role_name = None
+            if link.get("dash_role_id"):
+                r = await db.dash_roles.find_one({"id": link["dash_role_id"]}, {"_id": 0})
+                if r:
+                    perms = list(set(perms + list(r.get("permissions") or [])))
+                    dash_role_id = r["id"]; dash_role_name = r["name"]
+            upd: Dict[str, Any] = {"permissions": perms}
+            if dash_role_id:
+                upd["dash_role_id"] = dash_role_id; upd["dash_role_name"] = dash_role_name
+            await db.users.update_one({"discord_id": user["discord_id"]}, {"$set": upd})
+            if link.get("discord_role_id"):
+                try:
+                    import discord_bot as _b
+                    if _b.is_running():
+                        await _b.assign_roles(int(user["discord_id"]), add=[int(link["discord_role_id"])])
+                except Exception as e:
+                    log.warning("auto-assign Discord role failed: %s", e)
+    except Exception as e:
+        log.warning("auto role-sync failed: %s", e)
     return {"ok": True, "roblox_id": rid, "group_role": role}
 
 # ----- Dashboard roles (real, not test) -----
@@ -1040,6 +1085,61 @@ async def ranking_sweep(user=Depends(require_perm("ranking.promote"))):
         except Exception as e:
             log.warning("sweep error for %s: %s", u.get("roblox_user_id"), e)
     return {"changed": changed, "skipped": skipped}
+
+# ----- Automated role sync (Roblox group rank ↔ Discord role ↔ Dashboard role) -----
+@api.post("/me/sync-roles")
+async def sync_my_roles(user=Depends(current_user)):
+    """Apply role-link mappings: Roblox rank → Discord role + Dashboard role/permissions."""
+    if not user.get("roblox_user_id"):
+        raise HTTPException(400, "Link Roblox first")
+    # Refresh roblox group role
+    role = await roblox_group_role(int(user["roblox_user_id"])) or {"name": "Guest", "rank": 0}
+    rank = int(role.get("rank", 0))
+    # Find a matching role-link for this rank
+    link = await db.role_links.find_one({"roblox_rank": rank}, {"_id": 0})
+    discord_role_ids_to_add: List[int] = []
+    perms = list(user.get("permissions") or [])
+    dash_role_id = None; dash_role_name = None
+    if link:
+        if link.get("discord_role_id"):
+            try: discord_role_ids_to_add.append(int(link["discord_role_id"]))
+            except Exception: pass
+        if link.get("dash_role_id"):
+            r = await db.dash_roles.find_one({"id": link["dash_role_id"]}, {"_id": 0})
+            if r:
+                perms = list(set(perms + list(r.get("permissions") or [])))
+                dash_role_id = r["id"]; dash_role_name = r["name"]
+    update: Dict[str, Any] = {"roblox_group_role": role, "permissions": perms}
+    if dash_role_id:
+        update["dash_role_id"] = dash_role_id; update["dash_role_name"] = dash_role_name
+    await db.users.update_one({"discord_id": user["discord_id"]}, {"$set": update})
+
+    bot_result = {"ok": False}
+    if discord_role_ids_to_add:
+        try:
+            import discord_bot as _b
+            if _b.is_running():
+                bot_result = await _b.assign_roles(int(user["discord_id"]), add=discord_role_ids_to_add)
+        except Exception as e:
+            log.warning("sync_my_roles bot assign failed: %s", e)
+    return {"ok": True, "roblox_group_role": role, "dash_role": dash_role_name,
+            "discord_assigned": bot_result, "permissions": perms}
+
+# ----- Session detail (public-ish for staff with sessions perms) -----
+@api.get("/sessions/{sid}")
+async def session_detail(sid: str, user=Depends(current_user)):
+    s = await db.sessions.find_one({"id": sid}, {"_id": 0})
+    if not s: raise HTTPException(404, "Session not found")
+    can_view = (
+        "sessions.manage" in user.get("permissions", []) or
+        "sessions.view_active" in user.get("permissions", []) or
+        "sessions.view_logs" in user.get("permissions", []) or
+        "owner" in user.get("roles", []) or
+        s.get("created_by_id") == user.get("discord_id")
+    )
+    if not can_view:
+        raise HTTPException(403, "Not allowed to view this session")
+    return {"session": s}
 
 @api.post("/ranking/set")
 async def ranking_set(body: Dict[str, Any], user=Depends(require_perm("ranking.promote"))):

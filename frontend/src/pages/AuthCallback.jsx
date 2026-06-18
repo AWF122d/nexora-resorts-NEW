@@ -22,7 +22,7 @@ export default function AuthCallback() {
         await refresh();
         toast.success(`Welcome, ${data.user.username}`);
         if (!data.user.roblox_username) {
-          nav("/robloxlinking", { replace: true });
+          nav("/verify", { replace: true });
         } else {
           nav("/dashboard", { replace: true });
         }

@@ -14,7 +14,7 @@ log = logging.getLogger("nexora.bot")
 
 _intents = discord.Intents.default()
 _intents.message_content = False
-_intents.members = False
+_intents.members = True  # required for on_member_join (toggle in Dev Portal)
 _intents.guilds = True
 
 bot = commands.Bot(command_prefix="!", intents=_intents)
@@ -43,6 +43,63 @@ async def on_ready():
         log.info("Slash commands synced")
     except Exception as e:
         log.warning("Slash sync failed: %s", e)
+
+@bot.event
+async def on_member_join(member: discord.Member):
+    base = os.environ.get("PUBLIC_BASE_URL") or os.environ.get("FRONTEND_URL") or ""
+    if not base:
+        return
+    e = discord.Embed(title="Welcome to Nexora Resorts.", color=0x2563EB)
+    e.description = (
+        "Before you can access bookings, sessions and member-only spaces, we'll quickly "
+        "**verify** you. Verification links your Discord and Roblox accounts so we can apply "
+        "your group ranks automatically and keep our records accurate.\n\n"
+        "Tap the button below to begin — it takes about 30 seconds."
+    )
+    e.set_footer(text="Nexora Resorts")
+    view = discord.ui.View(timeout=None)
+    view.add_item(discord.ui.Button(label="Verify with Nexora", style=discord.ButtonStyle.link,
+                                    url=f"{base.rstrip('/')}/verify?discord_id={member.id}"))
+    try:
+        await member.send(embed=e, view=view)
+    except Exception as ex:
+        log.warning("on_member_join DM failed for %s: %s", member.id, ex)
+
+async def assign_roles(discord_user_id: int, *, add=None, remove=None) -> dict:
+    if not GUILD_ID:
+        return {"ok": False, "reason": "no guild"}
+    g = bot.get_guild(GUILD_ID) or await bot.fetch_guild(GUILD_ID)
+    if not g:
+        return {"ok": False, "reason": "guild missing"}
+    try:
+        m = g.get_member(discord_user_id) or await g.fetch_member(discord_user_id)
+    except Exception:
+        return {"ok": False, "reason": "member not found"}
+    out_add, out_rm = [], []
+    for rid in (add or []):
+        role = g.get_role(int(rid))
+        if role and role not in m.roles:
+            try:
+                await m.add_roles(role, reason="Nexora sync"); out_add.append(int(rid))
+            except Exception as e: log.warning("add_role: %s", e)
+    for rid in (remove or []):
+        role = g.get_role(int(rid))
+        if role and role in m.roles:
+            try:
+                await m.remove_roles(role, reason="Nexora sync"); out_rm.append(int(rid))
+            except Exception as e: log.warning("remove_role: %s", e)
+    return {"ok": True, "added": out_add, "removed": out_rm}
+
+async def member_role_ids(discord_user_id: int):
+    if not GUILD_ID: return []
+    g = bot.get_guild(GUILD_ID) or await bot.fetch_guild(GUILD_ID)
+    if not g: return []
+    try:
+        m = g.get_member(discord_user_id) or await g.fetch_member(discord_user_id)
+        return [r.id for r in m.roles if r.name != "@everyone"]
+    except Exception:
+        return []
+
 
 
 # ---------- helpers ----------
@@ -106,45 +163,50 @@ async def send_session_log(*, session_type: str, host: str, attendees_count: int
                            co_hosts: List[str], support: List[str], supervisors: List[str],
                            phases: List[str], current_phase: int = 0,
                            join_link: Optional[str] = None,
-                           subtitle: str = "Nexora Resorts") -> Optional[int]:
+                           subtitle: str = "Nexora Resorts",
+                           detail_url: Optional[str] = None) -> Optional[int]:
     """Posts the session embed. Returns the message id so it can be edited/deleted later."""
     ch = await _channel("sessions")
     if not ch:
         return None
+    desc_lines = ["**Starting**", f"{attendees_count} Attendees"]
+    if join_link:
+        desc_lines.append(f"Click **[here]({join_link})** to join the server.")
+    if detail_url:
+        desc_lines.append(f"Open the **[session board]({detail_url})** for details.")
     e = discord.Embed(
         title=f"Starting {session_type}",
-        description=(f"**Starting**\n{attendees_count} Attendees\n"
-                     f"Click **[here]({join_link})** to join the server." if join_link
-                     else f"**Starting**\n{attendees_count} Attendees"),
-        color=0x2563EB,  # blue
+        description="\n".join(desc_lines),
+        color=0x2563EB,
     )
     e.set_author(name="Nexora Sessions")
 
-    # Build a structured "card" using fields so it visually mimics the requested layout.
-    def _column(lines: List[str]) -> str:
-        return "\n".join(lines) if lines else "—"
+    def _column(label: str, names: List[str]) -> str:
+        if not names: return "—"
+        return "\n".join([f"**{label}**\n{n}" for n in names])
 
-    high_command = []
-    if host:        high_command.append("**Host**")
-    for _ in supervisors: high_command.append("**Supervisor**")
-    co = ["**Co-Host**" for _ in co_hosts]
-    helpers = ["**Helper**" for _ in support]
+    high_command_names = ([host] if host else []) + (supervisors or [])
+    high_command_labels = []
+    if host:        high_command_labels.append(("Host", host))
+    for sv in (supervisors or []): high_command_labels.append(("Supervisor", sv))
 
-    if any([high_command, co, helpers]):
-        e.add_field(name=f"__{session_type}__", value=subtitle, inline=False)
-        e.add_field(name="High Command", value=_column(high_command), inline=True)
-        e.add_field(name="Co-Hosts",     value=_column(co),           inline=True)
-        e.add_field(name="Helpers",      value=_column(helpers),      inline=True)
+    e.add_field(name=f"__{session_type}__", value=subtitle, inline=False)
+    e.add_field(name="High Command",
+                value="\n".join([f"**{lbl}**\n{nm}" for lbl, nm in high_command_labels]) or "—",
+                inline=True)
+    e.add_field(name="Co-Hosts",
+                value="\n".join([f"**Co-Host**\n{n}" for n in (co_hosts or [])]) or "—",
+                inline=True)
+    e.add_field(name="Helpers",
+                value="\n".join([f"**Helper**\n{n}" for n in (support or [])]) or "—",
+                inline=True)
 
     if phases:
         chips = []
         for i, p in enumerate(phases):
-            if i < current_phase:
-                chips.append(f"~~{p}~~")
-            elif i == current_phase:
-                chips.append(f"**{p}**")
-            else:
-                chips.append(p)
+            if i < current_phase:  chips.append(f"~~{p}~~")
+            elif i == current_phase: chips.append(f"**{p}**")
+            else: chips.append(p)
         e.add_field(name="\u200b", value=" • ".join(chips), inline=False)
 
     e.set_footer(text="Nexora Resorts")
@@ -155,7 +217,8 @@ async def update_session_embed(message_id: int, *, session_type: str, host: str,
                                attendees_count: int, co_hosts: List[str], support: List[str],
                                supervisors: List[str], phases: List[str], current_phase: int,
                                join_link: Optional[str] = None,
-                               subtitle: str = "Nexora Resorts") -> bool:
+                               subtitle: str = "Nexora Resorts",
+                               detail_url: Optional[str] = None) -> bool:
     ch = await _channel("sessions")
     if not ch or not message_id: return False
     try:
@@ -163,7 +226,8 @@ async def update_session_embed(message_id: int, *, session_type: str, host: str,
         new_id = await send_session_log(
             session_type=session_type, host=host, attendees_count=attendees_count,
             co_hosts=co_hosts, support=support, supervisors=supervisors,
-            phases=phases, current_phase=current_phase, join_link=join_link, subtitle=subtitle,
+            phases=phases, current_phase=current_phase, join_link=join_link,
+            subtitle=subtitle, detail_url=detail_url,
         )
         # Build the same embed but use msg.edit so we keep the message id
         if new_id:
@@ -299,6 +363,15 @@ async def start_bot():
     _started = True
     try:
         await bot.start(token)
+    except discord.errors.PrivilegedIntentsRequired:
+        log.warning("Members intent not enabled in Dev Portal — retrying without it.")
+        _intents.members = False
+        bot._connection._intents = _intents
+        try:
+            await bot.start(token)
+        except Exception as e:
+            log.exception("Bot crashed (fallback): %s", e)
+            _started = False
     except Exception as e:
         log.exception("Bot crashed: %s", e)
         _started = False

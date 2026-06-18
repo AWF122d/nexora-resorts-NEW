@@ -12,6 +12,8 @@ import Bookings from "@/pages/Bookings";
 import PlayerSearch from "@/pages/PlayerSearch";
 import Events from "@/pages/Events";
 import Sessions from "@/pages/Sessions";
+import SessionDetail from "@/pages/SessionDetail";
+import Verify from "@/pages/Verify";
 import Schedule from "@/pages/Schedule";
 import ActivityPage from "@/pages/Activity";
 import Ranking from "@/pages/Ranking";
@@ -52,6 +54,7 @@ export default function App() {
           <Routes>
             <Route path="/" element={<Landing />} />
             <Route path="/login" element={<Login />} />
+            <Route path="/verify" element={<Verify />} />
             <Route path="/auth/callback" element={<AuthCallback />} />
             <Route path="/auth/roblox/callback" element={<RobloxCallback />} />
             <Route path="/privacy-policy" element={<Privacy />} />
@@ -64,6 +67,7 @@ export default function App() {
               <Route path="/player-search" element={<Protected perm="players.view"><PlayerSearch /></Protected>} />
               <Route path="/events" element={<Protected perm="events.create"><Events /></Protected>} />
               <Route path="/sessions" element={<Protected perm="sessions.create"><Sessions /></Protected>} />
+              <Route path="/sessions/:id" element={<SessionDetail />} />
               <Route path="/schedule" element={<Schedule />} />
               <Route path="/activity" element={<ActivityPage />} />
               <Route path="/ranking" element={<Protected perm="ranking.promote"><Ranking /></Protected>} />
